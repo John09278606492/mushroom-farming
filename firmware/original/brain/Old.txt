@@ -1,0 +1,461 @@
+#include <Arduino.h>
+#include <HardwareSerial.h>
+#include <Arduino_GFX_Library.h>
+#include <Wire.h>
+#include <TAMC_GT911.h>
+#include <lvgl.h>
+
+// =====================================================
+// LCD <-> BODY UART
+// PIN CONFLICT NOTE:
+//   GT911 touch uses GPIO18 for INT.
+//   UART RX moved to GPIO13 to avoid conflict.
+//
+// Wiring:
+//   LCD GPIO17 -> BODY RX (GPIO26)
+//   LCD GPIO13 -> BODY TX (GPIO27)  <-- changed from 18
+//   GND        -> GND
+// =====================================================
+#define LCD_TX_TO_SLAVE   17
+#define LCD_RX_FROM_SLAVE 13
+
+HardwareSerial slaveSerial(1);
+
+// =====================================================
+// JC8048W550C DISPLAY  (800x480 RGB panel, ST7262)
+//
+// VERIFIED pin mapping (community-confirmed):
+//   R0=45, R1=48, R2=47, R3=21, R4=14
+//   G0=5,  G1=6,  G2=7,  G3=15, G4=16, G5=4
+//   B0=8,  B1=3,  B2=46, B3=9,  B4=1
+//   DE=40, VSYNC=41, HSYNC=39, PCLK=42
+//   Backlight=2 (active high)
+// =====================================================
+#define GFX_BL 2
+
+Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
+  40 /* DE     */,
+  41 /* VSYNC  */,
+  39 /* HSYNC  */,
+  42 /* PCLK   */,
+  // R0..R4
+  45 /* R0 */, 48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */,
+  // G0..G5
+   5 /* G0 */,  6 /* G1 */,  7 /* G2 */, 15 /* G3 */, 16 /* G4 */,  4 /* G5 */,
+  // B0..B4
+   8 /* B0 */,  3 /* B1 */, 46 /* B2 */,  9 /* B3 */,  1 /* B4 */,
+  0  /* hsync_polarity */,
+  8  /* hsync_front_porch */,
+  4  /* hsync_pulse_width */,
+  8  /* hsync_back_porch */,
+  0  /* vsync_polarity */,
+  8  /* vsync_front_porch */,
+  4  /* vsync_pulse_width */,
+  8  /* vsync_back_porch */,
+  1  /* pclk_active_neg */,
+  16000000 /* prefer_speed */
+);
+
+Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
+  800        /* width  */,
+  480        /* height */,
+  rgbpanel   /* panel  */,
+  0          /* rotation */,
+  true       /* auto_flush */
+);
+
+// =====================================================
+// JC8048W550C TOUCH  (GT911 capacitive, I2C)
+// =====================================================
+#define TOUCH_SDA  19
+#define TOUCH_SCL  20
+#define TOUCH_INT  18
+#define TOUCH_RST  38
+#define TOUCH_W   800
+#define TOUCH_H   480
+
+TAMC_GT911 ts = TAMC_GT911(TOUCH_SDA, TOUCH_SCL, TOUCH_INT, TOUCH_RST, TOUCH_W, TOUCH_H);
+
+// =====================================================
+// LVGL v9 DRIVER OBJECTS
+// =====================================================
+#define SCREEN_W  800
+#define SCREEN_H  480
+#define BUF_LINES  20
+
+static lv_color_t    buf1[SCREEN_W * BUF_LINES];
+static lv_display_t *disp;
+static lv_indev_t   *indev;
+
+// LVGL v9 flush callback
+void my_disp_flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map) {
+  uint32_t w = (area->x2 - area->x1 + 1);
+  uint32_t h = (area->y2 - area->y1 + 1);
+  gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)px_map, w, h);
+  lv_display_flush_ready(display);
+}
+
+// LVGL v9 touch read callback
+void my_touch_read(lv_indev_t *indev_drv, lv_indev_data_t *data) {
+  ts.read();
+  if (ts.isTouched) {
+    data->state   = LV_INDEV_STATE_PRESSED;
+    data->point.x = ts.points[0].x;
+    data->point.y = ts.points[0].y;
+  } else {
+    data->state = LV_INDEV_STATE_RELEASED;
+  }
+}
+
+// =====================================================
+// SHARED STATUS VARIABLES
+// =====================================================
+float  humidity             = 0.0;
+float  temperature          = 0.0;
+int    co2ppm               = 0;
+bool   lowWater             = false;
+bool   mistState            = false;
+bool   refillState          = false;
+bool   sprinklerState       = false;
+bool   fanState             = false;
+bool   lightState           = false;
+bool   autoMode             = true;
+String rtcTime              = "RTC_ERR";
+
+float  humidityOnThreshold  = 85.0;
+float  humidityOffThreshold = 95.0;
+int    co2FanOnThreshold    = 800;
+int    co2FanOffThreshold   = 700;
+
+// =====================================================
+// LVGL LABEL OBJECTS
+// =====================================================
+lv_obj_t *lblTitle;
+lv_obj_t *lblHumidity;
+lv_obj_t *lblTemperature;
+lv_obj_t *lblCO2;
+lv_obj_t *lblRTC;
+lv_obj_t *lblLowWater;
+lv_obj_t *lblMist;
+lv_obj_t *lblRefill;
+lv_obj_t *lblSprinkler;
+lv_obj_t *lblFan;
+lv_obj_t *lblLight;
+lv_obj_t *lblAuto;
+lv_obj_t *lblHumThreshold;
+lv_obj_t *lblCO2Threshold;
+
+// =====================================================
+// UART SEND
+// =====================================================
+void sendCommand(const String& cmd) {
+  slaveSerial.println(cmd);
+  Serial.print("SENT: ");
+  Serial.println(cmd);
+}
+
+// =====================================================
+// HELPERS
+// =====================================================
+String getFieldValue(String data, String key) {
+  int start = data.indexOf(key + "=");
+  if (start < 0) return "";
+  start += key.length() + 1;
+  int end = data.indexOf(',', start);
+  if (end < 0) end = data.length();
+  return data.substring(start, end);
+}
+
+String onOff(bool v) { return v ? "ON"  : "OFF"; }
+String yesNo(bool v) { return v ? "YES" : "NO";  }
+
+// =====================================================
+// PARSE STATUS FROM BODY
+// =====================================================
+void parseStatus(String line) {
+  if (!line.startsWith("STATUS,")) return;
+
+  String v;
+  v = getFieldValue(line, "AUTO");      if (v.length()) autoMode      = v.toInt();
+  v = getFieldValue(line, "H");         if (v.length()) humidity       = v.toFloat();
+  v = getFieldValue(line, "T");         if (v.length()) temperature    = v.toFloat();
+  v = getFieldValue(line, "CO2");       if (v.length()) co2ppm         = v.toInt();
+  v = getFieldValue(line, "LOWWATER");  if (v.length()) lowWater       = v.toInt();
+  v = getFieldValue(line, "MIST");      if (v.length()) mistState      = v.toInt();
+  v = getFieldValue(line, "REFILL");    if (v.length()) refillState    = v.toInt();
+  v = getFieldValue(line, "SPRINKLER"); if (v.length()) sprinklerState = v.toInt();
+  v = getFieldValue(line, "FAN");       if (v.length()) fanState       = v.toInt();
+  v = getFieldValue(line, "LIGHT");     if (v.length()) lightState     = v.toInt();
+  v = getFieldValue(line, "TIME");      if (v.length()) rtcTime        = v;
+
+  Serial.println("----- LCD RECEIVED -----");
+  Serial.println(line);
+  Serial.println("------------------------");
+}
+
+// =====================================================
+// UPDATE DISPLAY LABELS
+// =====================================================
+void updateDisplay() {
+  if (!lblHumidity) return;
+
+  lv_label_set_text(lblHumidity,    ("Humidity: "    + String(humidity, 1)    + " %").c_str());
+  lv_label_set_text(lblTemperature, ("Temperature: " + String(temperature, 1) + " C").c_str());
+  lv_label_set_text(lblCO2,         ("CO2: "         + String(co2ppm)         + " ppm").c_str());
+  lv_label_set_text(lblRTC,         ("Time: "        + rtcTime).c_str());
+
+  lv_label_set_text(lblLowWater,  ("Low Water: "   + yesNo(lowWater)).c_str());
+  lv_label_set_text(lblMist,      ("Mist: "        + onOff(mistState)).c_str());
+  lv_label_set_text(lblRefill,    ("Refill Pump: " + onOff(refillState)).c_str());
+  lv_label_set_text(lblSprinkler, ("Sprinkler: "   + onOff(sprinklerState)).c_str());
+  lv_label_set_text(lblFan,       ("Fan: "         + onOff(fanState)).c_str());
+  lv_label_set_text(lblLight,     ("Light: "       + onOff(lightState)).c_str());
+  lv_label_set_text(lblAuto,      ("Mode: "        + String(autoMode ? "AUTO" : "MANUAL")).c_str());
+
+  lv_label_set_text(lblHumThreshold,
+    ("Humidity ON/OFF: " + String(humidityOnThreshold, 1) +
+     " / "              + String(humidityOffThreshold, 1)).c_str());
+
+  lv_label_set_text(lblCO2Threshold,
+    ("CO2 Fan ON/OFF: " + String(co2FanOnThreshold) +
+     " / "             + String(co2FanOffThreshold)).c_str());
+}
+
+// =====================================================
+// BUTTON EVENT HANDLER
+// =====================================================
+void button_event_handler(lv_event_t *e) {
+  lv_obj_t *btn = (lv_obj_t *)lv_event_get_target(e);
+  lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+  if (!lbl) return;
+
+  const char *txt = lv_label_get_text(lbl);
+  if (!txt) return;
+
+  String s = txt;
+
+  if      (s == "AUTO ON")       sendCommand("AUTO_ON");
+  else if (s == "AUTO OFF")      sendCommand("AUTO_OFF");
+  else if (s == "MIST ON")       sendCommand("MIST_ON");
+  else if (s == "MIST OFF")      sendCommand("MIST_OFF");
+  else if (s == "REFILL ON")     sendCommand("REFILL_ON");
+  else if (s == "REFILL OFF")    sendCommand("REFILL_OFF");
+  else if (s == "SPRINKLER ON")  sendCommand("SPRINKLER_ON");
+  else if (s == "SPRINKLER OFF") sendCommand("SPRINKLER_OFF");
+  else if (s == "FAN ON")        sendCommand("FAN_ON");
+  else if (s == "FAN OFF")       sendCommand("FAN_OFF");
+  else if (s == "LIGHT ON")      sendCommand("LIGHT_ON");
+  else if (s == "LIGHT OFF")     sendCommand("LIGHT_OFF");
+
+  else if (s == "HUM ON +")  { humidityOnThreshold  += 1.0; sendCommand("SET_HUM_ON="  + String(humidityOnThreshold,  1)); }
+  else if (s == "HUM ON -")  { humidityOnThreshold  -= 1.0; sendCommand("SET_HUM_ON="  + String(humidityOnThreshold,  1)); }
+  else if (s == "HUM OFF +") { humidityOffThreshold += 1.0; sendCommand("SET_HUM_OFF=" + String(humidityOffThreshold, 1)); }
+  else if (s == "HUM OFF -") { humidityOffThreshold -= 1.0; sendCommand("SET_HUM_OFF=" + String(humidityOffThreshold, 1)); }
+  else if (s == "CO2 ON +")  { co2FanOnThreshold    += 50;  sendCommand("SET_CO2_ON="  + String(co2FanOnThreshold));       }
+  else if (s == "CO2 ON -")  { co2FanOnThreshold    -= 50;  sendCommand("SET_CO2_ON="  + String(co2FanOnThreshold));       }
+  else if (s == "CO2 OFF +") { co2FanOffThreshold   += 50;  sendCommand("SET_CO2_OFF=" + String(co2FanOffThreshold));      }
+  else if (s == "CO2 OFF -") { co2FanOffThreshold   -= 50;  sendCommand("SET_CO2_OFF=" + String(co2FanOffThreshold));      }
+
+  updateDisplay();
+}
+
+// =====================================================
+// CREATE BUTTON HELPER
+// =====================================================
+lv_obj_t* createButton(const char* text, int x, int y, int w = 110, int h = 45) {
+  lv_obj_t *btn = lv_btn_create(lv_scr_act());
+  lv_obj_set_size(btn, w, h);
+  lv_obj_set_pos(btn, x, y);
+  lv_obj_add_event_cb(btn, button_event_handler, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *lbl = lv_label_create(btn);
+  lv_label_set_text(lbl, text);
+  lv_obj_center(lbl);
+
+  return btn;
+}
+
+// =====================================================
+// BUILD UI
+// =====================================================
+void createUI() {
+  lblTitle = lv_label_create(lv_scr_act());
+  lv_label_set_text(lblTitle, "Mushroom Farm Control Panel");
+  lv_obj_set_pos(lblTitle, 10, 5);
+
+  lblHumidity = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblHumidity, 10, 35);
+
+  lblTemperature = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblTemperature, 10, 60);
+
+  lblCO2 = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblCO2, 10, 85);
+
+  lblRTC = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblRTC, 10, 110);
+
+  lblLowWater = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblLowWater, 10, 140);
+
+  lblMist = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblMist, 10, 165);
+
+  lblRefill = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblRefill, 10, 190);
+
+  lblSprinkler = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblSprinkler, 10, 215);
+
+  lblFan = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblFan, 10, 240);
+
+  lblLight = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblLight, 10, 265);
+
+  lblAuto = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblAuto, 10, 290);
+
+  lblHumThreshold = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblHumThreshold, 10, 320);
+
+  lblCO2Threshold = lv_label_create(lv_scr_act());
+  lv_obj_set_pos(lblCO2Threshold, 10, 345);
+
+  // --- Control Buttons ---
+  createButton("AUTO ON",       380,  20);
+  createButton("AUTO OFF",      500,  20);
+  createButton("MIST ON",       380,  80);
+  createButton("MIST OFF",      500,  80);
+  createButton("REFILL ON",     380, 140);
+  createButton("REFILL OFF",    500, 140);
+  createButton("SPRINKLER ON",  380, 200);
+  createButton("SPRINKLER OFF", 500, 200);
+  createButton("FAN ON",        380, 260);
+  createButton("FAN OFF",       500, 260);
+  createButton("LIGHT ON",      380, 320);
+  createButton("LIGHT OFF",     500, 320);
+
+  // --- Threshold Buttons ---
+  createButton("HUM ON +",  640,  40, 100, 40);
+  createButton("HUM ON -",  640,  85, 100, 40);
+  createButton("HUM OFF +", 640, 140, 100, 40);
+  createButton("HUM OFF -", 640, 185, 100, 40);
+  createButton("CO2 ON +",  640, 240, 100, 40);
+  createButton("CO2 ON -",  640, 285, 100, 40);
+  createButton("CO2 OFF +", 640, 340, 100, 40);
+  createButton("CO2 OFF -", 640, 385, 100, 40);
+
+  updateDisplay();
+}
+
+// =====================================================
+// SERIAL CONSOLE FALLBACK (USB testing)
+// =====================================================
+void serialConsoleFallback() {
+  if (!Serial.available()) return;
+
+  String cmd = Serial.readStringUntil('\n');
+  cmd.trim();
+  cmd.toUpperCase();
+
+  if      (cmd == "AUTO_ON")       sendCommand("AUTO_ON");
+  else if (cmd == "AUTO_OFF")      sendCommand("AUTO_OFF");
+  else if (cmd == "MIST_ON")       sendCommand("MIST_ON");
+  else if (cmd == "MIST_OFF")      sendCommand("MIST_OFF");
+  else if (cmd == "REFILL_ON")     sendCommand("REFILL_ON");
+  else if (cmd == "REFILL_OFF")    sendCommand("REFILL_OFF");
+  else if (cmd == "SPRINKLER_ON")  sendCommand("SPRINKLER_ON");
+  else if (cmd == "SPRINKLER_OFF") sendCommand("SPRINKLER_OFF");
+  else if (cmd == "FAN_ON")        sendCommand("FAN_ON");
+  else if (cmd == "FAN_OFF")       sendCommand("FAN_OFF");
+  else if (cmd == "LIGHT_ON")      sendCommand("LIGHT_ON");
+  else if (cmd == "LIGHT_OFF")     sendCommand("LIGHT_OFF");
+  else if (cmd == "GET")           sendCommand("GET_STATUS");
+}
+
+// =====================================================
+// DISPLAY + TOUCH INIT  (JC8048W550C, LVGL v9)
+// =====================================================
+void initDisplayAndTouch() {
+  // Backlight ON (GPIO2, active high)
+  pinMode(GFX_BL, OUTPUT);
+  digitalWrite(GFX_BL, HIGH);
+
+  // Start display and clear to black
+  gfx->begin();
+  gfx->fillScreen(0x0000);
+
+  // Start GT911 touch over I2C
+  Wire.begin(TOUCH_SDA, TOUCH_SCL);
+  ts.begin();
+  ts.setRotation(ROTATION_NORMAL);
+
+  // --- LVGL v9 init ---
+  lv_init();
+
+  // Register display
+  disp = lv_display_create(SCREEN_W, SCREEN_H);
+  lv_display_set_flush_cb(disp, my_disp_flush);
+  lv_display_set_buffers(disp, buf1, NULL, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+  // Register touch input
+  indev = lv_indev_create();
+  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev, my_touch_read);
+}
+
+// =====================================================
+// SETUP
+// =====================================================
+void setup() {
+  Serial.begin(115200);
+
+  // UART to BODY (RX=GPIO13, TX=GPIO17)
+  slaveSerial.begin(115200, SERIAL_8N1, LCD_RX_FROM_SLAVE, LCD_TX_TO_SLAVE);
+
+  // Display + touch + LVGL
+  initDisplayAndTouch();
+
+  // === DIAGNOSTIC: Draw colored boxes to confirm panel works ===
+  // Red box (top-left), Green box (center), Blue box (bottom-right)
+  // Remove this block once display is confirmed working.
+  gfx->fillRect(50,  50,  150, 150, 0xF800);  // RED
+  gfx->fillRect(325, 165, 150, 150, 0x07E0);  // GREEN
+  gfx->fillRect(600, 280, 150, 150, 0x001F);  // BLUE
+  Serial.println("DIAGNOSTIC: RGB boxes drawn — check LCD");
+  delay(5000);
+  gfx->fillScreen(0x0000);  // clear before LVGL takes over
+
+  // Build LVGL UI
+  createUI();
+
+  Serial.println("LCD BRAIN READY");
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+void loop() {
+  // Read incoming status from BODY
+  while (slaveSerial.available()) {
+    String line = slaveSerial.readStringUntil('\n');
+    line.trim();
+    parseStatus(line);
+    updateDisplay();
+  }
+
+  // USB Serial fallback for testing
+  serialConsoleFallback();
+
+  // Request status from BODY every 2 seconds
+  static unsigned long lastReq = 0;
+  if (millis() - lastReq > 2000) {
+    lastReq = millis();
+    sendCommand("GET_STATUS");
+  }
+
+  // LVGL task handler — must be called regularly
+  lv_timer_handler();
+  delay(5);
+}

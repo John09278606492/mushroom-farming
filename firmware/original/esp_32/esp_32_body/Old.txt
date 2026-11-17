@@ -1,0 +1,474 @@
+#include <Wire.h>
+#include <RTClib.h>
+#include <DHT.h>
+#include <HardwareSerial.h>
+
+// =========================
+// PIN ASSIGNMENTS
+// =========================
+#define DHT_PIN              4
+#define DHT_TYPE             DHT22
+#define FLOAT_PIN            18
+#define SSR_MIST_PIN         12
+#define RELAY_REFILL_PIN     13
+#define RELAY_SPRINKLER_PIN  19
+#define RELAY_FAN_PIN        23
+#define RELAY_LIGHT_PIN      25
+#define CO2_RX_PIN           16
+#define CO2_TX_PIN           17
+#define MASTER_RX_PIN        26
+#define MASTER_TX_PIN        27
+#define RTC_SDA_PIN          21
+#define RTC_SCL_PIN          22
+
+// =========================
+// RELAY LOGIC CONFIG
+// Change these if your relays behave differently
+// =========================
+// SSR: HIGH = ON
+#define SSR_ON   HIGH
+#define SSR_OFF  LOW
+
+// Relay module: try HIGH=ON first
+// If still inverted, change to LOW/HIGH
+#define RELAY_ON  HIGH
+#define RELAY_OFF LOW
+
+// =========================
+// OBJECTS
+// =========================
+DHT dht(DHT_PIN, DHT_TYPE);
+RTC_DS3231 rtc;
+HardwareSerial co2Serial(2);
+HardwareSerial lcdSerial(1);
+
+bool rtcAvailable = false;
+
+// =========================
+// SETTINGS
+// =========================
+float humidityOnThreshold  = 85.0;
+float humidityOffThreshold = 95.0;
+int co2FanOnThreshold  = 800;
+int co2FanOffThreshold = 700;
+
+// =========================
+// SPRINKLER SCHEDULE
+// =========================
+#define MAX_SCHEDULES 5
+
+struct SprinklerSchedule {
+  bool enabled;
+  int hour;
+  int minute;
+  int durationSec;
+  bool days[7];
+};
+
+SprinklerSchedule schedules[MAX_SCHEDULES];
+int numSchedules = 0;
+bool scheduleFiredThisMinute[MAX_SCHEDULES] = {false};
+int lastCheckedMinute = -1;
+
+// =========================
+// STATES
+// =========================
+bool autoMode = true;
+
+bool mistState = false;
+bool refillState = false;
+bool sprinklerState = false;
+bool fanState = false;
+bool lightState = false;
+
+unsigned long lastSensorReadMs = 0;
+unsigned long lastStatusSendMs = 0;
+unsigned long sprinklerStopMs  = 0;
+
+float humidity = NAN;
+float temperature = NAN;
+int co2ppm = -1;
+bool lowWater = false;
+
+byte co2Cmd[9] = {0xFF, 0x01, 0x86, 0, 0, 0, 0, 0, 0x79};
+
+// =========================
+// OUTPUT FUNCTIONS
+// =========================
+void setMist(bool on) {
+  digitalWrite(SSR_MIST_PIN, on ? SSR_ON : SSR_OFF);
+  mistState = on;
+  Serial.println("MIST -> " + String(on ? "ON" : "OFF"));
+}
+
+void setRefill(bool on) {
+  digitalWrite(RELAY_REFILL_PIN, on ? RELAY_ON : RELAY_OFF);
+  refillState = on;
+  Serial.println("REFILL -> " + String(on ? "ON" : "OFF"));
+}
+
+void setSprinkler(bool on) {
+  digitalWrite(RELAY_SPRINKLER_PIN, on ? RELAY_ON : RELAY_OFF);
+  sprinklerState = on;
+  Serial.println("SPRINKLER -> " + String(on ? "ON" : "OFF"));
+}
+
+void setFan(bool on) {
+  digitalWrite(RELAY_FAN_PIN, on ? RELAY_ON : RELAY_OFF);
+  fanState = on;
+  Serial.println("FAN -> " + String(on ? "ON" : "OFF"));
+}
+
+void setLight(bool on) {
+  digitalWrite(RELAY_LIGHT_PIN, on ? RELAY_ON : RELAY_OFF);
+  lightState = on;
+  Serial.println("LIGHT -> " + String(on ? "ON" : "OFF"));
+}
+
+// =========================
+// SENSOR READS
+// =========================
+void readDHT() {
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  if (!isnan(h) && !isnan(t)) {
+    humidity = h;
+    temperature = t;
+  }
+}
+
+void readFloatSwitch() {
+  lowWater = (digitalRead(FLOAT_PIN) == LOW);
+}
+
+void readCO2() {
+  while (co2Serial.available()) co2Serial.read();
+  co2Serial.write(co2Cmd, 9);
+  delay(100);
+  if (co2Serial.available() >= 9) {
+    byte response[9];
+    co2Serial.readBytes(response, 9);
+    if (response[0] == 0xFF && response[1] == 0x86) {
+      co2ppm = (response[2] << 8) | response[3];
+    }
+  }
+}
+
+// =========================
+// RTC HELPERS
+// =========================
+String getTimeString() {
+  if (!rtcAvailable) return "RTC_ERR";
+  DateTime now = rtc.now();
+  char buf[25];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+           now.year(), now.month(), now.day(),
+           now.hour(), now.minute(), now.second());
+  return String(buf);
+}
+
+String getDayName(int d) {
+  const char* names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+  return (d >= 0 && d < 7) ? names[d] : "?";
+}
+
+String formatTime12h(int hour, int minute) {
+  String ampm = "AM";
+  int h12 = hour;
+  if (h12 == 0) h12 = 12;
+  else if (h12 == 12) ampm = "PM";
+  else if (h12 > 12) { h12 -= 12; ampm = "PM"; }
+  char buf[10];
+  snprintf(buf, sizeof(buf), "%d:%02d%s", h12, minute, ampm.c_str());
+  return String(buf);
+}
+
+// =========================
+// SPRINKLER SCHEDULE CHECK
+// Only runs in AUTO mode
+// =========================
+void checkSprinklerSchedules() {
+  if (!rtcAvailable) return;
+
+  DateTime now = rtc.now();
+  int currentDay = now.dayOfTheWeek();
+  int currentHour = now.hour();
+  int currentMinute = now.minute();
+
+  if (currentMinute != lastCheckedMinute) {
+    lastCheckedMinute = currentMinute;
+    for (int i = 0; i < MAX_SCHEDULES; i++) {
+      scheduleFiredThisMinute[i] = false;
+    }
+  }
+
+  for (int i = 0; i < numSchedules; i++) {
+    if (!schedules[i].enabled) continue;
+    if (scheduleFiredThisMinute[i]) continue;
+    if (!schedules[i].days[currentDay]) continue;
+
+    if (currentHour == schedules[i].hour &&
+        currentMinute == schedules[i].minute) {
+      setSprinkler(true);
+      sprinklerStopMs = millis() + (unsigned long)schedules[i].durationSec * 1000UL;
+      scheduleFiredThisMinute[i] = true;
+      Serial.print("SCHEDULE #" + String(i) + " TRIGGERED: ");
+      Serial.println(formatTime12h(currentHour, currentMinute));
+    }
+  }
+
+  if (sprinklerState && sprinklerStopMs > 0 && millis() >= sprinklerStopMs) {
+    setSprinkler(false);
+    sprinklerStopMs = 0;
+    Serial.println("SPRINKLER auto-stopped");
+  }
+}
+
+// =========================
+// AUTO LOGIC — ONLY runs when autoMode == true
+// =========================
+void runAutoLogic() {
+  // CRITICAL: do NOTHING if auto mode is off
+  if (!autoMode) return;
+
+  // Humidity -> Mist control
+  if (!isnan(humidity)) {
+    if (humidity < humidityOnThreshold && !mistState) setMist(true);
+    else if (humidity > humidityOffThreshold && mistState) setMist(false);
+  }
+
+  // Water level -> Refill control
+  if (lowWater && !refillState) setRefill(true);
+  else if (!lowWater && refillState) setRefill(false);
+
+  // CO2 -> Fan control
+  if (co2ppm >= 0) {
+    if (co2ppm > co2FanOnThreshold && !fanState) setFan(true);
+    else if (co2ppm < co2FanOffThreshold && fanState) setFan(false);
+  }
+
+  // Sprinkler schedules — always check even in auto
+  checkSprinklerSchedules();
+}
+
+// =========================
+// BUILD SCHEDULE STRING
+// =========================
+String buildScheduleString() {
+  if (numSchedules == 0) return "NONE";
+  String result = "";
+  for (int i = 0; i < numSchedules; i++) {
+    if (i > 0) result += "|";
+    result += String(i) + ":";
+    result += String(schedules[i].enabled ? "ON" : "OFF") + ":";
+    result += formatTime12h(schedules[i].hour, schedules[i].minute) + ":";
+    result += String(schedules[i].durationSec) + "s:";
+    for (int d = 0; d < 7; d++) {
+      if (schedules[i].days[d]) result += getDayName(d);
+    }
+  }
+  return result;
+}
+
+// =========================
+// STATUS SEND
+// =========================
+void sendStatusToMaster() {
+  String packet =
+    "STATUS,"
+    "AUTO=" + String(autoMode ? 1 : 0) + "," +
+    "H=" + String(humidity, 1) + "," +
+    "T=" + String(temperature, 1) + "," +
+    "CO2=" + String(co2ppm) + "," +
+    "LOWWATER=" + String(lowWater ? 1 : 0) + "," +
+    "MIST=" + String(mistState ? 1 : 0) + "," +
+    "REFILL=" + String(refillState ? 1 : 0) + "," +
+    "SPRINKLER=" + String(sprinklerState ? 1 : 0) + "," +
+    "FAN=" + String(fanState ? 1 : 0) + "," +
+    "LIGHT=" + String(lightState ? 1 : 0) + "," +
+    "SCHED=" + buildScheduleString() + "," +
+    "TIME=" + getTimeString();
+
+  lcdSerial.println(packet);
+  Serial.println(packet);
+}
+
+// =========================
+// PARSE SCHEDULE COMMAND
+// =========================
+void parseScheduleCommand(String cmd) {
+  int commaPos;
+
+  commaPos = cmd.indexOf(',');
+  if (commaPos < 0) return;
+  int idx = cmd.substring(0, commaPos).toInt();
+  cmd = cmd.substring(commaPos + 1);
+  if (idx < 0 || idx >= MAX_SCHEDULES) return;
+
+  commaPos = cmd.indexOf(',');
+  if (commaPos < 0) return;
+  bool en = cmd.substring(0, commaPos).toInt();
+  cmd = cmd.substring(commaPos + 1);
+
+  commaPos = cmd.indexOf(',');
+  if (commaPos < 0) return;
+  int hr = cmd.substring(0, commaPos).toInt();
+  cmd = cmd.substring(commaPos + 1);
+
+  commaPos = cmd.indexOf(',');
+  if (commaPos < 0) return;
+  int mn = cmd.substring(0, commaPos).toInt();
+  cmd = cmd.substring(commaPos + 1);
+
+  commaPos = cmd.indexOf(',');
+  if (commaPos < 0) return;
+  int dur = cmd.substring(0, commaPos).toInt();
+  cmd = cmd.substring(commaPos + 1);
+
+  bool days[7] = {false};
+  for (int i = 0; i < (int)cmd.length(); i++) {
+    int d = cmd.charAt(i) - '0';
+    if (d >= 0 && d < 7) days[d] = true;
+  }
+
+  schedules[idx].enabled = en;
+  schedules[idx].hour = hr;
+  schedules[idx].minute = mn;
+  schedules[idx].durationSec = dur;
+  for (int d = 0; d < 7; d++) schedules[idx].days[d] = days[d];
+  if (idx >= numSchedules) numSchedules = idx + 1;
+
+  Serial.print("Schedule #" + String(idx) + ": ");
+  Serial.print(en ? "ON " : "OFF ");
+  Serial.print(formatTime12h(hr, mn) + " ");
+  Serial.print(String(dur) + "s ");
+  for (int d = 0; d < 7; d++) if (days[d]) Serial.print(getDayName(d) + " ");
+  Serial.println();
+}
+
+// =========================
+// COMMAND HANDLER
+// =========================
+void handleCommand(String cmd) {
+  cmd.trim();
+
+  // DON'T toUpperCase the whole thing — schedule days might have mixed case
+  String cmdUpper = cmd;
+  cmdUpper.toUpperCase();
+
+  Serial.println("CMD: " + cmd);
+
+  // AUTO MODE — when turned OFF, auto logic stops completely
+  if (cmdUpper == "AUTO_ON") {
+    autoMode = true;
+    Serial.println("AUTO MODE ON — sensors will control devices");
+  }
+  else if (cmdUpper == "AUTO_OFF") {
+    autoMode = false;
+    Serial.println("AUTO MODE OFF — manual control only");
+  }
+
+  // MANUAL CONTROLS — work regardless of auto mode
+  else if (cmdUpper == "MIST_ON")       setMist(true);
+  else if (cmdUpper == "MIST_OFF")      setMist(false);
+  else if (cmdUpper == "REFILL_ON")     setRefill(true);
+  else if (cmdUpper == "REFILL_OFF")    setRefill(false);
+  else if (cmdUpper == "SPRINKLER_ON")  { setSprinkler(true);  sprinklerStopMs = 0; }
+  else if (cmdUpper == "SPRINKLER_OFF") { setSprinkler(false); sprinklerStopMs = 0; }
+  else if (cmdUpper == "FAN_ON")        setFan(true);
+  else if (cmdUpper == "FAN_OFF")       setFan(false);
+  else if (cmdUpper == "LIGHT_ON")      setLight(true);
+  else if (cmdUpper == "LIGHT_OFF")     setLight(false);
+
+  else if (cmdUpper == "GET_STATUS") sendStatusToMaster();
+
+  else if (cmdUpper.startsWith("SET_RTC=") && rtcAvailable) {
+    String ts = cmdUpper.substring(8);
+    rtc.adjust(DateTime(
+      ts.substring(0, 4).toInt(),
+      ts.substring(5, 7).toInt(),
+      ts.substring(8, 10).toInt(),
+      ts.substring(11, 13).toInt(),
+      ts.substring(14, 16).toInt(),
+      ts.substring(17, 19).toInt()
+    ));
+  }
+
+  else if (cmdUpper.startsWith("SET_HUM_ON="))  humidityOnThreshold  = cmdUpper.substring(11).toFloat();
+  else if (cmdUpper.startsWith("SET_HUM_OFF=")) humidityOffThreshold = cmdUpper.substring(12).toFloat();
+  else if (cmdUpper.startsWith("SET_CO2_ON="))  co2FanOnThreshold    = cmdUpper.substring(11).toInt();
+  else if (cmdUpper.startsWith("SET_CO2_OFF=")) co2FanOffThreshold   = cmdUpper.substring(12).toInt();
+
+  else if (cmdUpper.startsWith("SET_SCHED=")) parseScheduleCommand(cmdUpper.substring(10));
+  else if (cmdUpper == "CLEAR_SCHED") {
+    numSchedules = 0;
+    for (int i = 0; i < MAX_SCHEDULES; i++) schedules[i].enabled = false;
+    Serial.println("Schedules cleared");
+  }
+}
+
+void readCommands() {
+  while (lcdSerial.available()) {
+    handleCommand(lcdSerial.readStringUntil('\n'));
+  }
+}
+
+// =========================
+// SETUP
+// =========================
+void setup() {
+  Serial.begin(115200);
+
+  Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
+  rtcAvailable = rtc.begin();
+  Serial.println(rtcAvailable ? "RTC OK" : "RTC NOT FOUND");
+
+  dht.begin();
+
+  pinMode(FLOAT_PIN, INPUT_PULLUP);
+  pinMode(SSR_MIST_PIN, OUTPUT);
+  pinMode(RELAY_REFILL_PIN, OUTPUT);
+  pinMode(RELAY_SPRINKLER_PIN, OUTPUT);
+  pinMode(RELAY_FAN_PIN, OUTPUT);
+  pinMode(RELAY_LIGHT_PIN, OUTPUT);
+
+  // Start with everything OFF
+  setMist(false);
+  setRefill(false);
+  setSprinkler(false);
+  setFan(false);
+  setLight(false);
+
+  for (int i = 0; i < MAX_SCHEDULES; i++) {
+    schedules[i].enabled = false;
+    schedules[i].hour = 0;
+    schedules[i].minute = 0;
+    schedules[i].durationSec = 10;
+    for (int d = 0; d < 7; d++) schedules[i].days[d] = false;
+  }
+
+  co2Serial.begin(9600, SERIAL_8N1, CO2_RX_PIN, CO2_TX_PIN);
+  lcdSerial.begin(115200, SERIAL_8N1, MASTER_RX_PIN, MASTER_TX_PIN);
+
+  Serial.println("BODY READY");
+}
+
+// =========================
+// LOOP
+// =========================
+void loop() {
+  readCommands();
+
+  if (millis() - lastSensorReadMs >= 2000) {
+    lastSensorReadMs = millis();
+    readDHT();
+    readFloatSwitch();
+    readCO2();
+    runAutoLogic();
+  }
+
+  if (millis() - lastStatusSendMs >= 2000) {
+    lastStatusSendMs = millis();
+    sendStatusToMaster();
+  }
+}

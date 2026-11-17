@@ -1,0 +1,3 @@
+# Third-party Arduino libraries (~208 MB) are kept locally only; versions are listed in firmware/original/README.md
+firmware/original/libraries/*
+!firmware/original/libraries/lv_conf.h

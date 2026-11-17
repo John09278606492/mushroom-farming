@@ -1,0 +1,895 @@
+#include <Arduino.h>
+#include <HardwareSerial.h>
+#include <Arduino_GFX_Library.h>
+#include <Wire.h>
+#include <TAMC_GT911.h>
+#include <lvgl.h>
+
+// =====================================================
+// UART PINS (NO CHANGE)
+// =====================================================
+#define LCD_TX_TO_SLAVE   17
+#define LCD_RX_FROM_SLAVE 13
+HardwareSerial slaveSerial(1);
+
+// =====================================================
+// DISPLAY PINS (NO CHANGE)
+// =====================================================
+#define GFX_BL 2
+
+Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
+  40 /* DE     */,
+  41 /* VSYNC  */,
+  39 /* HSYNC  */,
+  42 /* PCLK   */,
+  45 /* R0 */, 48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */,
+   5 /* G0 */,  6 /* G1 */,  7 /* G2 */, 15 /* G3 */, 16 /* G4 */,  4 /* G5 */,
+   8 /* B0 */,  3 /* B1 */, 46 /* B2 */,  9 /* B3 */,  1 /* B4 */,
+  0, 8, 4, 8,
+  0, 8, 4, 8,
+  1,
+  16000000
+);
+
+Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
+  800, 480, rgbpanel, 0, true
+);
+
+// =====================================================
+// TOUCH PINS (NO CHANGE)
+// =====================================================
+#define TOUCH_SDA  19
+#define TOUCH_SCL  20
+#define TOUCH_INT  18
+#define TOUCH_RST  38
+#define TOUCH_W   800
+#define TOUCH_H   480
+
+TAMC_GT911 ts = TAMC_GT911(TOUCH_SDA, TOUCH_SCL, TOUCH_INT, TOUCH_RST, TOUCH_W, TOUCH_H);
+
+// =====================================================
+// LVGL
+// =====================================================
+#define SCREEN_W  800
+#define SCREEN_H  480
+#define BUF_LINES 20
+
+static lv_color_t    buf1[SCREEN_W * BUF_LINES];
+static lv_display_t *disp;
+static lv_indev_t   *indev;
+
+// =====================================================
+// SHARED STATUS VARIABLES
+// =====================================================
+float  humidity             = 0.0;
+float  temperature          = 0.0;
+int    co2ppm               = 0;
+bool   lowWater             = false;
+bool   mistState            = false;
+bool   refillState          = false;
+bool   sprinklerState       = false;
+bool   fanState             = false;
+bool   lightState           = false;
+bool   autoMode             = true;
+String rtcTime              = "RTC_ERR";
+
+String sprinklerSchedText   = "NONE";
+String lightSchedText       = "NONE";
+
+// =====================================================
+// SCREENS
+// =====================================================
+lv_obj_t *screenHome;
+lv_obj_t *screenSprinkler;
+lv_obj_t *screenLight;
+lv_obj_t *screenRTC;
+
+// =====================================================
+// HOME OBJECTS
+// =====================================================
+lv_obj_t *lblTopTime;
+lv_obj_t *lblTopEnv;
+
+lv_obj_t *chipSprPanel;
+lv_obj_t *chipLightPanel;
+lv_obj_t *chipAutoPanel;
+lv_obj_t *chipWaterPanel;
+
+lv_obj_t *chipSprLabel;
+lv_obj_t *chipLightLabel;
+lv_obj_t *chipAutoLabel;
+lv_obj_t *chipWaterLabel;
+
+// =====================================================
+// PAGE OBJECTS
+// =====================================================
+lv_obj_t *lblSprStatus;
+lv_obj_t *lblSprSched;
+
+lv_obj_t *lblLightStatus;
+lv_obj_t *lblLightSched;
+
+lv_obj_t *lblRTCStatus;
+
+// sprinkler controls
+lv_obj_t *rollerSprHour;
+lv_obj_t *rollerSprMinute;
+lv_obj_t *rollerSprDuration;
+lv_obj_t *ddSprIndex;
+lv_obj_t *swSprEnable;
+lv_obj_t *cbSprDays[7];
+
+// light controls
+lv_obj_t *rollerLightHour;
+lv_obj_t *rollerLightMinute;
+lv_obj_t *rollerLightDuration;
+lv_obj_t *ddLightIndex;
+lv_obj_t *swLightEnable;
+lv_obj_t *cbLightDays[7];
+
+// rtc controls
+lv_obj_t *rollerYear;
+lv_obj_t *rollerMonth;
+lv_obj_t *rollerDay;
+lv_obj_t *rollerHour;
+lv_obj_t *rollerMinute;
+lv_obj_t *rollerSecond;
+
+// =====================================================
+// UTILITIES
+// =====================================================
+String getFieldValue(String data, String key) {
+  int start = data.indexOf(key + "=");
+  if (start < 0) return "";
+  start += key.length() + 1;
+  int end = data.indexOf(',', start);
+  if (end < 0) end = data.length();
+  return data.substring(start, end);
+}
+
+void sendCommand(const String& cmd) {
+  slaveSerial.println(cmd);
+  Serial.print("SENT: ");
+  Serial.println(cmd);
+}
+
+void sendRTCToBody(int year, int month, int day, int hour, int minute, int second) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "SET_RTC=%04d-%02d-%02d %02d:%02d:%02d",
+           year, month, day, hour, minute, second);
+  sendCommand(String(buf));
+}
+
+void sendSprinklerSchedule(int idx, bool en, int hour, int minute, int dur, String daysDigits) {
+  String cmd = "SET_SPRINKLER_SCHED=" +
+               String(idx) + "," +
+               String(en ? 1 : 0) + "," +
+               String(hour) + "," +
+               String(minute) + "," +
+               String(dur) + "," +
+               daysDigits;
+  sendCommand(cmd);
+}
+
+void sendLightSchedule(int idx, bool en, int hour, int minute, int dur, String daysDigits) {
+  String cmd = "SET_LIGHT_SCHED=" +
+               String(idx) + "," +
+               String(en ? 1 : 0) + "," +
+               String(hour) + "," +
+               String(minute) + "," +
+               String(dur) + "," +
+               daysDigits;
+  sendCommand(cmd);
+}
+
+int getRollerInt(lv_obj_t *roller) {
+  char buf[16];
+  lv_roller_get_selected_str(roller, buf, sizeof(buf));
+  return atoi(buf);
+}
+
+String getCheckedDays(lv_obj_t *checks[7]) {
+  String result = "";
+  for (int i = 0; i < 7; i++) {
+    if (lv_obj_has_state(checks[i], LV_STATE_CHECKED)) {
+      result += String(i);
+    }
+  }
+  return result;
+}
+
+void fillNumericOptions(char *buf, size_t size, int start, int end, bool fourDigits = false) {
+  buf[0] = '\0';
+  for (int i = start; i <= end; i++) {
+    char line[16];
+    if (fourDigits) snprintf(line, sizeof(line), "%04d", i);
+    else snprintf(line, sizeof(line), "%02d", i);
+    strncat(buf, line, size - strlen(buf) - 1);
+    if (i < end) strncat(buf, "\n", size - strlen(buf) - 1);
+  }
+}
+
+// =====================================================
+// LVGL DISPLAY / TOUCH CALLBACKS
+// =====================================================
+void my_disp_flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map) {
+  uint32_t w = (area->x2 - area->x1 + 1);
+  uint32_t h = (area->y2 - area->y1 + 1);
+  gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)px_map, w, h);
+  lv_display_flush_ready(display);
+}
+
+void my_touch_read(lv_indev_t *indev_drv, lv_indev_data_t *data) {
+  ts.read();
+  if (ts.isTouched) {
+    data->state   = LV_INDEV_STATE_PRESSED;
+    data->point.x = ts.points[0].x;
+    data->point.y = ts.points[0].y;
+  } else {
+    data->state = LV_INDEV_STATE_RELEASED;
+  }
+}
+
+// =====================================================
+// UI STYLE HELPERS
+// =====================================================
+void styleScreen(lv_obj_t *scr) {
+  lv_obj_set_style_bg_color(scr, lv_color_hex(0x0F172A), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+}
+
+void stylePanel(lv_obj_t *obj) {
+  lv_obj_set_style_radius(obj, 18, 0);
+  lv_obj_set_style_bg_color(obj, lv_color_hex(0x1E293B), 0);
+  lv_obj_set_style_border_color(obj, lv_color_hex(0x334155), 0);
+  lv_obj_set_style_border_width(obj, 2, 0);
+  lv_obj_set_style_pad_all(obj, 10, 0);
+}
+
+void styleCardButton(lv_obj_t *obj) {
+  stylePanel(obj);
+  lv_obj_set_style_shadow_width(obj, 8, 0);
+  lv_obj_set_style_shadow_opa(obj, LV_OPA_20, 0);
+}
+
+lv_obj_t* createHeader(lv_obj_t *parent, const char *title) {
+  lv_obj_t *bar = lv_obj_create(parent);
+  lv_obj_remove_style_all(bar);
+  lv_obj_set_size(bar, 800, 60);
+  lv_obj_set_pos(bar, 0, 0);
+  lv_obj_set_style_bg_color(bar, lv_color_hex(0x111827), 0);
+  lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+
+  lv_obj_t *lbl = lv_label_create(bar);
+  lv_label_set_text(lbl, title);
+  lv_obj_set_style_text_font(lbl, &lv_font_montserrat_22, 0);
+  lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+  lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 16, 0);
+
+  return bar;
+}
+
+lv_obj_t* createBackButton(lv_obj_t *parent, lv_event_cb_t cb) {
+  lv_obj_t *btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, 100, 42);
+  lv_obj_set_pos(btn, 680, 10);
+  lv_obj_set_style_radius(btn, 18, 0);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *lbl = lv_label_create(btn);
+  lv_label_set_text(lbl, "Back");
+  lv_obj_center(lbl);
+
+  return btn;
+}
+
+lv_obj_t* createChip(lv_obj_t *parent, int x, int y, int w, const char *title, lv_obj_t **chipLabelOut) {
+  lv_obj_t *panel = lv_obj_create(parent);
+  lv_obj_set_size(panel, w, 54);
+  lv_obj_set_pos(panel, x, y);
+  stylePanel(panel);
+
+  lv_obj_t *ttl = lv_label_create(panel);
+  lv_label_set_text(ttl, title);
+  lv_obj_set_style_text_color(ttl, lv_color_hex(0xCBD5E1), 0);
+  lv_obj_align(ttl, LV_ALIGN_LEFT_MID, 10, 0);
+
+  lv_obj_t *chip = lv_label_create(panel);
+  lv_label_set_text(chip, "OFF");
+  lv_obj_set_style_text_color(chip, lv_color_white(), 0);
+  lv_obj_align(chip, LV_ALIGN_RIGHT_MID, -12, 0);
+
+  *chipLabelOut = chip;
+  return panel;
+}
+
+lv_obj_t* createCard(lv_obj_t *parent, int x, int y, const char *title, const char *subtitle, lv_event_cb_t cb) {
+  lv_obj_t *btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, 180, 110);
+  lv_obj_set_pos(btn, x, y);
+  styleCardButton(btn);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *ttl = lv_label_create(btn);
+  lv_label_set_text(ttl, title);
+  lv_obj_set_style_text_font(ttl, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(ttl, lv_color_white(), 0);
+  lv_obj_align(ttl, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lv_obj_t *sub = lv_label_create(btn);
+  lv_label_set_text(sub, subtitle);
+  lv_obj_set_style_text_color(sub, lv_color_hex(0x94A3B8), 0);
+  lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+  return btn;
+}
+
+lv_obj_t* createActionButton(lv_obj_t *parent, int x, int y, int w, const char *text, lv_event_cb_t cb) {
+  lv_obj_t *btn = lv_btn_create(parent);
+  lv_obj_set_size(btn, w, 48);
+  lv_obj_set_pos(btn, x, y);
+  lv_obj_set_style_radius(btn, 18, 0);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *lbl = lv_label_create(btn);
+  lv_label_set_text(lbl, text);
+  lv_obj_center(lbl);
+
+  return btn;
+}
+
+// =====================================================
+// REFRESH UI
+// =====================================================
+void refreshUI() {
+  if (lblTopTime) {
+    lv_label_set_text(lblTopTime, ("Time: " + rtcTime).c_str());
+  }
+
+  if (lblTopEnv) {
+    String env = "Humidity: " + String(humidity, 1) +
+                 "%   Temp: " + String(temperature, 1) +
+                 " C   CO2: " + String(co2ppm) + " ppm";
+    lv_label_set_text(lblTopEnv, env.c_str());
+  }
+
+  if (chipSprLabel) {
+    lv_label_set_text(chipSprLabel, sprinklerState ? "ON" : "OFF");
+    lv_obj_set_style_text_color(chipSprLabel, sprinklerState ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED), 0);
+  }
+
+  if (chipLightLabel) {
+    lv_label_set_text(chipLightLabel, lightState ? "ON" : "OFF");
+    lv_obj_set_style_text_color(chipLightLabel, lightState ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED), 0);
+  }
+
+  if (chipAutoLabel) {
+    lv_label_set_text(chipAutoLabel, autoMode ? "AUTO" : "MANUAL");
+    lv_obj_set_style_text_color(chipAutoLabel, autoMode ? lv_palette_main(LV_PALETTE_BLUE) : lv_palette_main(LV_PALETTE_ORANGE), 0);
+  }
+
+  if (chipWaterLabel) {
+    lv_label_set_text(chipWaterLabel, lowWater ? "LOW" : "OK");
+    lv_obj_set_style_text_color(chipWaterLabel, lowWater ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN), 0);
+  }
+
+  if (lblSprStatus) {
+    lv_label_set_text(lblSprStatus, sprinklerState ? "ON" : "OFF");
+    lv_obj_set_style_text_color(lblSprStatus, sprinklerState ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED), 0);
+  }
+
+  if (lblLightStatus) {
+    lv_label_set_text(lblLightStatus, lightState ? "ON" : "OFF");
+    lv_obj_set_style_text_color(lblLightStatus, lightState ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED), 0);
+  }
+
+  if (lblSprSched) {
+    lv_label_set_text(lblSprSched, ("Current: " + sprinklerSchedText).c_str());
+  }
+
+  if (lblLightSched) {
+    lv_label_set_text(lblLightSched, ("Current: " + lightSchedText).c_str());
+  }
+
+  if (lblRTCStatus) {
+    lv_label_set_text(lblRTCStatus, ("Current RTC: " + rtcTime).c_str());
+  }
+}
+
+// =====================================================
+// STATUS PARSE
+// =====================================================
+void parseStatus(String line) {
+  if (!line.startsWith("STATUS,")) return;
+
+  String v;
+  v = getFieldValue(line, "AUTO");             if (v.length()) autoMode = v.toInt();
+  v = getFieldValue(line, "H");                if (v.length()) humidity = v.toFloat();
+  v = getFieldValue(line, "T");                if (v.length()) temperature = v.toFloat();
+  v = getFieldValue(line, "CO2");              if (v.length()) co2ppm = v.toInt();
+  v = getFieldValue(line, "LOWWATER");         if (v.length()) lowWater = v.toInt();
+  v = getFieldValue(line, "MIST");             if (v.length()) mistState = v.toInt();
+  v = getFieldValue(line, "REFILL");           if (v.length()) refillState = v.toInt();
+  v = getFieldValue(line, "SPRINKLER");        if (v.length()) sprinklerState = v.toInt();
+  v = getFieldValue(line, "FAN");              if (v.length()) fanState = v.toInt();
+  v = getFieldValue(line, "LIGHT");            if (v.length()) lightState = v.toInt();
+  v = getFieldValue(line, "TIME");             if (v.length()) rtcTime = v;
+  v = getFieldValue(line, "SPRINKLER_SCHED");  if (v.length()) sprinklerSchedText = v;
+  v = getFieldValue(line, "LIGHT_SCHED");      if (v.length()) lightSchedText = v;
+
+  refreshUI();
+}
+
+// =====================================================
+// NAVIGATION
+// =====================================================
+void goHome(lv_event_t *e) {
+  LV_UNUSED(e);
+  lv_screen_load(screenHome);
+}
+
+void goSprinkler(lv_event_t *e) {
+  LV_UNUSED(e);
+  refreshUI();
+  lv_screen_load(screenSprinkler);
+}
+
+void goLight(lv_event_t *e) {
+  LV_UNUSED(e);
+  refreshUI();
+  lv_screen_load(screenLight);
+}
+
+void goRTC(lv_event_t *e) {
+  LV_UNUSED(e);
+  refreshUI();
+  lv_screen_load(screenRTC);
+}
+
+// =====================================================
+// ACTIONS
+// =====================================================
+void actAutoOn(lv_event_t *e)  { LV_UNUSED(e); sendCommand("AUTO_ON");  }
+void actAutoOff(lv_event_t *e) { LV_UNUSED(e); sendCommand("AUTO_OFF"); }
+
+void actSprOn(lv_event_t *e)   { LV_UNUSED(e); sendCommand("SPRINKLER_ON");  }
+void actSprOff(lv_event_t *e)  { LV_UNUSED(e); sendCommand("SPRINKLER_OFF"); }
+
+void actLightOn(lv_event_t *e)  { LV_UNUSED(e); sendCommand("LIGHT_ON");  }
+void actLightOff(lv_event_t *e) { LV_UNUSED(e); sendCommand("LIGHT_OFF"); }
+
+void actApplySpr(lv_event_t *e) {
+  LV_UNUSED(e);
+  int idx = lv_dropdown_get_selected(ddSprIndex);
+  bool en = lv_obj_has_state(swSprEnable, LV_STATE_CHECKED);
+  int hh = getRollerInt(rollerSprHour);
+  int mm = getRollerInt(rollerSprMinute);
+  int dd = getRollerInt(rollerSprDuration);
+  String days = getCheckedDays(cbSprDays);
+  sendSprinklerSchedule(idx, en, hh, mm, dd, days);
+}
+
+void actClearSpr(lv_event_t *e) {
+  LV_UNUSED(e);
+  sendCommand("CLEAR_SPRINKLER_SCHED");
+}
+
+void actApplyLight(lv_event_t *e) {
+  LV_UNUSED(e);
+  int idx = lv_dropdown_get_selected(ddLightIndex);
+  bool en = lv_obj_has_state(swLightEnable, LV_STATE_CHECKED);
+  int hh = getRollerInt(rollerLightHour);
+  int mm = getRollerInt(rollerLightMinute);
+  int dd = getRollerInt(rollerLightDuration);
+  String days = getCheckedDays(cbLightDays);
+  sendLightSchedule(idx, en, hh, mm, dd, days);
+}
+
+void actClearLight(lv_event_t *e) {
+  LV_UNUSED(e);
+  sendCommand("CLEAR_LIGHT_SCHED");
+}
+
+void actApplyRTC(lv_event_t *e) {
+  LV_UNUSED(e);
+  int yy = getRollerInt(rollerYear);
+  int mo = getRollerInt(rollerMonth);
+  int da = getRollerInt(rollerDay);
+  int hh = getRollerInt(rollerHour);
+  int mi = getRollerInt(rollerMinute);
+  int ss = getRollerInt(rollerSecond);
+  sendRTCToBody(yy, mo, da, hh, mi, ss);
+}
+
+// =====================================================
+// SCREEN BUILDERS
+// =====================================================
+void buildHomeScreen() {
+  screenHome = lv_obj_create(NULL);
+  styleScreen(screenHome);
+
+  createHeader(screenHome, "Mushroom Farm Dashboard");
+
+  lblTopTime = lv_label_create(screenHome);
+  lv_obj_set_pos(lblTopTime, 16, 74);
+  lv_obj_set_style_text_font(lblTopTime, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_color(lblTopTime, lv_color_white(), 0);
+  lv_label_set_text(lblTopTime, "Time: RTC_ERR");
+
+  lblTopEnv = lv_label_create(screenHome);
+  lv_obj_set_pos(lblTopEnv, 16, 102);
+  lv_obj_set_style_text_color(lblTopEnv, lv_color_hex(0x94A3B8), 0);
+  lv_label_set_text(lblTopEnv, "Humidity: 0.0%   Temp: 0.0 C   CO2: 0 ppm");
+
+  createCard(screenHome,  20, 150, "Sprinkler", "Tap to control", goSprinkler);
+  createCard(screenHome, 220, 150, "Light",     "Tap to control", goLight);
+  createCard(screenHome, 420, 150, "RTC",       "Set system time", goRTC);
+  createCard(screenHome, 620, 150, "Mode",      "Quick actions below", goRTC);
+
+  chipSprPanel   = createChip(screenHome,  20, 285, 180, "Sprinkler", &chipSprLabel);
+  chipLightPanel = createChip(screenHome, 220, 285, 180, "Light",     &chipLightLabel);
+  chipAutoPanel  = createChip(screenHome, 420, 285, 180, "Mode",      &chipAutoLabel);
+  chipWaterPanel = createChip(screenHome, 620, 285, 180, "Water",     &chipWaterLabel);
+
+  createActionButton(screenHome, 240, 375, 140, "AUTO ON",  actAutoOn);
+  createActionButton(screenHome, 400, 375, 140, "AUTO OFF", actAutoOff);
+}
+
+void buildSprinklerScreen() {
+  screenSprinkler = lv_obj_create(NULL);
+  styleScreen(screenSprinkler);
+
+  createHeader(screenSprinkler, "Sprinkler");
+  createBackButton(screenSprinkler, goHome);
+
+  lv_obj_t *statusBox = lv_obj_create(screenSprinkler);
+  lv_obj_set_size(statusBox, 220, 140);
+  lv_obj_set_pos(statusBox, 20, 80);
+  stylePanel(statusBox);
+
+  lv_obj_t *lblA = lv_label_create(statusBox);
+  lv_label_set_text(lblA, "Current Status");
+  lv_obj_set_style_text_color(lblA, lv_color_hex(0xCBD5E1), 0);
+  lv_obj_align(lblA, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lblSprStatus = lv_label_create(statusBox);
+  lv_label_set_text(lblSprStatus, "OFF");
+  lv_obj_set_style_text_font(lblSprStatus, &lv_font_montserrat_28, 0);
+  lv_obj_align(lblSprStatus, LV_ALIGN_CENTER, 0, 15);
+
+  createActionButton(screenSprinkler, 20, 235, 100, "ON",  actSprOn);
+  createActionButton(screenSprinkler, 140, 235, 100, "OFF", actSprOff);
+
+  lv_obj_t *schedBox = lv_obj_create(screenSprinkler);
+  lv_obj_set_size(schedBox, 520, 360);
+  lv_obj_set_pos(schedBox, 260, 80);
+  stylePanel(schedBox);
+
+  lv_obj_t *title = lv_label_create(schedBox);
+  lv_label_set_text(title, "Schedule Setup");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lv_obj_t *lblIdx = lv_label_create(schedBox);
+  lv_label_set_text(lblIdx, "Index");
+  lv_obj_set_pos(lblIdx, 10, 48);
+
+  ddSprIndex = lv_dropdown_create(schedBox);
+  lv_dropdown_set_options(ddSprIndex, "0\n1\n2\n3\n4");
+  lv_obj_set_size(ddSprIndex, 90, 40);
+  lv_obj_set_pos(ddSprIndex, 60, 42);
+
+  lv_obj_t *lblEn = lv_label_create(schedBox);
+  lv_label_set_text(lblEn, "Enable");
+  lv_obj_set_pos(lblEn, 180, 48);
+
+  swSprEnable = lv_switch_create(schedBox);
+  lv_obj_set_pos(swSprEnable, 245, 44);
+
+  static char hhOpts[128];
+  static char mmOpts[192];
+  static char durOpts[256];
+  fillNumericOptions(hhOpts, sizeof(hhOpts), 0, 23);
+  fillNumericOptions(mmOpts, sizeof(mmOpts), 0, 59);
+  fillNumericOptions(durOpts, sizeof(durOpts), 1, 60);
+
+  lv_obj_t *lblHr = lv_label_create(schedBox);
+  lv_label_set_text(lblHr, "Hour");
+  lv_obj_set_pos(lblHr, 10, 95);
+
+  rollerSprHour = lv_roller_create(schedBox);
+  lv_roller_set_options(rollerSprHour, hhOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerSprHour, 90, 120);
+  lv_obj_set_pos(rollerSprHour, 10, 120);
+  lv_roller_set_visible_row_count(rollerSprHour, 4);
+
+  lv_obj_t *lblMin = lv_label_create(schedBox);
+  lv_label_set_text(lblMin, "Minute");
+  lv_obj_set_pos(lblMin, 120, 95);
+
+  rollerSprMinute = lv_roller_create(schedBox);
+  lv_roller_set_options(rollerSprMinute, mmOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerSprMinute, 90, 120);
+  lv_obj_set_pos(rollerSprMinute, 120, 120);
+  lv_roller_set_visible_row_count(rollerSprMinute, 4);
+
+  lv_obj_t *lblDur = lv_label_create(schedBox);
+  lv_label_set_text(lblDur, "Duration");
+  lv_obj_set_pos(lblDur, 230, 95);
+
+  rollerSprDuration = lv_roller_create(schedBox);
+  lv_roller_set_options(rollerSprDuration, durOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerSprDuration, 100, 120);
+  lv_obj_set_pos(rollerSprDuration, 230, 120);
+  lv_roller_set_visible_row_count(rollerSprDuration, 4);
+
+  const char *dayNames[7] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+  for (int i = 0; i < 7; i++) {
+    cbSprDays[i] = lv_checkbox_create(schedBox);
+    lv_checkbox_set_text(cbSprDays[i], dayNames[i]);
+    int col = i % 4;
+    int row = i / 4;
+    lv_obj_set_pos(cbSprDays[i], 350 + col * 70, 120 + row * 42);
+  }
+
+  createActionButton(schedBox, 40, 275, 110, "APPLY", actApplySpr);
+  createActionButton(schedBox, 170, 275, 110, "CLEAR", actClearSpr);
+
+  lblSprSched = lv_label_create(schedBox);
+  lv_obj_set_width(lblSprSched, 470);
+  lv_obj_set_pos(lblSprSched, 20, 325);
+  lv_label_set_long_mode(lblSprSched, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(lblSprSched, "Current: NONE");
+}
+
+void buildLightScreen() {
+  screenLight = lv_obj_create(NULL);
+  styleScreen(screenLight);
+
+  createHeader(screenLight, "Light");
+  createBackButton(screenLight, goHome);
+
+  lv_obj_t *statusBox = lv_obj_create(screenLight);
+  lv_obj_set_size(statusBox, 220, 140);
+  lv_obj_set_pos(statusBox, 20, 80);
+  stylePanel(statusBox);
+
+  lv_obj_t *lblA = lv_label_create(statusBox);
+  lv_label_set_text(lblA, "Current Status");
+  lv_obj_set_style_text_color(lblA, lv_color_hex(0xCBD5E1), 0);
+  lv_obj_align(lblA, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lblLightStatus = lv_label_create(statusBox);
+  lv_label_set_text(lblLightStatus, "OFF");
+  lv_obj_set_style_text_font(lblLightStatus, &lv_font_montserrat_28, 0);
+  lv_obj_align(lblLightStatus, LV_ALIGN_CENTER, 0, 15);
+
+  createActionButton(screenLight, 20, 235, 100, "ON",  actLightOn);
+  createActionButton(screenLight, 140, 235, 100, "OFF", actLightOff);
+
+  lv_obj_t *schedBox = lv_obj_create(screenLight);
+  lv_obj_set_size(schedBox, 520, 360);
+  lv_obj_set_pos(schedBox, 260, 80);
+  stylePanel(schedBox);
+
+  lv_obj_t *title = lv_label_create(schedBox);
+  lv_label_set_text(title, "Schedule Setup");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lv_obj_t *lblIdx = lv_label_create(schedBox);
+  lv_label_set_text(lblIdx, "Index");
+  lv_obj_set_pos(lblIdx, 10, 48);
+
+  ddLightIndex = lv_dropdown_create(schedBox);
+  lv_dropdown_set_options(ddLightIndex, "0\n1\n2\n3\n4");
+  lv_obj_set_size(ddLightIndex, 90, 40);
+  lv_obj_set_pos(ddLightIndex, 60, 42);
+
+  lv_obj_t *lblEn = lv_label_create(schedBox);
+  lv_label_set_text(lblEn, "Enable");
+  lv_obj_set_pos(lblEn, 180, 48);
+
+  swLightEnable = lv_switch_create(schedBox);
+  lv_obj_set_pos(swLightEnable, 245, 44);
+
+  static char hhOpts[128];
+  static char mmOpts[192];
+  static char durOpts[256];
+  fillNumericOptions(hhOpts, sizeof(hhOpts), 0, 23);
+  fillNumericOptions(mmOpts, sizeof(mmOpts), 0, 59);
+  fillNumericOptions(durOpts, sizeof(durOpts), 1, 60);
+
+  lv_obj_t *lblHr = lv_label_create(schedBox);
+  lv_label_set_text(lblHr, "Hour");
+  lv_obj_set_pos(lblHr, 10, 95);
+
+  rollerLightHour = lv_roller_create(schedBox);
+  lv_roller_set_options(rollerLightHour, hhOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerLightHour, 90, 120);
+  lv_obj_set_pos(rollerLightHour, 10, 120);
+  lv_roller_set_visible_row_count(rollerLightHour, 4);
+
+  lv_obj_t *lblMin = lv_label_create(schedBox);
+  lv_label_set_text(lblMin, "Minute");
+  lv_obj_set_pos(lblMin, 120, 95);
+
+  rollerLightMinute = lv_roller_create(schedBox);
+  lv_roller_set_options(rollerLightMinute, mmOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerLightMinute, 90, 120);
+  lv_obj_set_pos(rollerLightMinute, 120, 120);
+  lv_roller_set_visible_row_count(rollerLightMinute, 4);
+
+  lv_obj_t *lblDur = lv_label_create(schedBox);
+  lv_label_set_text(lblDur, "Duration");
+  lv_obj_set_pos(lblDur, 230, 95);
+
+  rollerLightDuration = lv_roller_create(schedBox);
+  lv_roller_set_options(rollerLightDuration, durOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerLightDuration, 100, 120);
+  lv_obj_set_pos(rollerLightDuration, 230, 120);
+  lv_roller_set_visible_row_count(rollerLightDuration, 4);
+
+  const char *dayNames[7] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+  for (int i = 0; i < 7; i++) {
+    cbLightDays[i] = lv_checkbox_create(schedBox);
+    lv_checkbox_set_text(cbLightDays[i], dayNames[i]);
+    int col = i % 4;
+    int row = i / 4;
+    lv_obj_set_pos(cbLightDays[i], 350 + col * 70, 120 + row * 42);
+  }
+
+  createActionButton(schedBox, 40, 275, 110, "APPLY", actApplyLight);
+  createActionButton(schedBox, 170, 275, 110, "CLEAR", actClearLight);
+
+  lblLightSched = lv_label_create(schedBox);
+  lv_obj_set_width(lblLightSched, 470);
+  lv_obj_set_pos(lblLightSched, 20, 325);
+  lv_label_set_long_mode(lblLightSched, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(lblLightSched, "Current: NONE");
+}
+
+void buildRTCScreen() {
+  screenRTC = lv_obj_create(NULL);
+  styleScreen(screenRTC);
+
+  createHeader(screenRTC, "RTC Settings");
+  createBackButton(screenRTC, goHome);
+
+  lv_obj_t *box = lv_obj_create(screenRTC);
+  lv_obj_set_size(box, 760, 360);
+  lv_obj_set_pos(box, 20, 80);
+  stylePanel(box);
+
+  lblRTCStatus = lv_label_create(box);
+  lv_label_set_text(lblRTCStatus, "Current RTC: RTC_ERR");
+  lv_obj_set_style_text_font(lblRTCStatus, &lv_font_montserrat_20, 0);
+  lv_obj_set_pos(lblRTCStatus, 20, 20);
+
+  static char yearOpts[1024];
+  static char monthOpts[64];
+  static char dayOpts[128];
+  static char hourOpts[128];
+  static char minOpts[192];
+  static char secOpts[192];
+
+  fillNumericOptions(yearOpts, sizeof(yearOpts), 2024, 2035, true);
+  fillNumericOptions(monthOpts, sizeof(monthOpts), 1, 12);
+  fillNumericOptions(dayOpts, sizeof(dayOpts), 1, 31);
+  fillNumericOptions(hourOpts, sizeof(hourOpts), 0, 23);
+  fillNumericOptions(minOpts, sizeof(minOpts), 0, 59);
+  fillNumericOptions(secOpts, sizeof(secOpts), 0, 59);
+
+  const char *labels[] = {"Year", "Month", "Day", "Hour", "Minute", "Second"};
+  int xs[] = {20, 145, 270, 395, 520, 645};
+
+  for (int i = 0; i < 6; i++) {
+    lv_obj_t *lbl = lv_label_create(box);
+    lv_label_set_text(lbl, labels[i]);
+    lv_obj_set_pos(lbl, xs[i], 80);
+  }
+
+  rollerYear = lv_roller_create(box);
+  lv_roller_set_options(rollerYear, yearOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerYear, 100, 150);
+  lv_obj_set_pos(rollerYear, 20, 110);
+  lv_roller_set_visible_row_count(rollerYear, 5);
+
+  rollerMonth = lv_roller_create(box);
+  lv_roller_set_options(rollerMonth, monthOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerMonth, 100, 150);
+  lv_obj_set_pos(rollerMonth, 145, 110);
+  lv_roller_set_visible_row_count(rollerMonth, 5);
+
+  rollerDay = lv_roller_create(box);
+  lv_roller_set_options(rollerDay, dayOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerDay, 100, 150);
+  lv_obj_set_pos(rollerDay, 270, 110);
+  lv_roller_set_visible_row_count(rollerDay, 5);
+
+  rollerHour = lv_roller_create(box);
+  lv_roller_set_options(rollerHour, hourOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerHour, 100, 150);
+  lv_obj_set_pos(rollerHour, 395, 110);
+  lv_roller_set_visible_row_count(rollerHour, 5);
+
+  rollerMinute = lv_roller_create(box);
+  lv_roller_set_options(rollerMinute, minOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerMinute, 100, 150);
+  lv_obj_set_pos(rollerMinute, 520, 110);
+  lv_roller_set_visible_row_count(rollerMinute, 5);
+
+  rollerSecond = lv_roller_create(box);
+  lv_roller_set_options(rollerSecond, secOpts, LV_ROLLER_MODE_NORMAL);
+  lv_obj_set_size(rollerSecond, 100, 150);
+  lv_obj_set_pos(rollerSecond, 645, 110);
+  lv_roller_set_visible_row_count(rollerSecond, 5);
+
+  createActionButton(box, 290, 290, 180, "APPLY RTC", actApplyRTC);
+}
+
+// =====================================================
+// INIT DISPLAY + TOUCH
+// =====================================================
+void initDisplayAndTouch() {
+  pinMode(GFX_BL, OUTPUT);
+  digitalWrite(GFX_BL, HIGH);
+
+  gfx->begin();
+  gfx->fillScreen(0x0000);
+
+  Wire.begin(TOUCH_SDA, TOUCH_SCL);
+  ts.begin();
+  ts.setRotation(ROTATION_NORMAL);
+
+  lv_init();
+
+  disp = lv_display_create(SCREEN_W, SCREEN_H);
+  lv_display_set_flush_cb(disp, my_disp_flush);
+  lv_display_set_buffers(disp, buf1, NULL, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+  indev = lv_indev_create();
+  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev, my_touch_read);
+}
+
+// =====================================================
+// SETUP
+// =====================================================
+void setup() {
+  Serial.begin(115200);
+
+  slaveSerial.begin(115200, SERIAL_8N1, LCD_RX_FROM_SLAVE, LCD_TX_TO_SLAVE);
+
+  initDisplayAndTouch();
+
+  buildHomeScreen();
+  buildSprinklerScreen();
+  buildLightScreen();
+  buildRTCScreen();
+
+  lv_screen_load(screenHome);
+  refreshUI();
+
+  Serial.println("HMI UI V3 READY");
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+void loop() {
+  while (slaveSerial.available()) {
+    String line = slaveSerial.readStringUntil('\n');
+    line.trim();
+    parseStatus(line);
+  }
+
+  static unsigned long lastReq = 0;
+  if (millis() - lastReq > 2000) {
+    lastReq = millis();
+    sendCommand("GET_STATUS");
+  }
+
+  lv_timer_handler();
+  delay(5);
+}
