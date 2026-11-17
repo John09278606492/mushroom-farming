@@ -6,6 +6,15 @@ Prepared 2026-11-16. Nothing changed in the repo or the project files between th
 
 ---
 
+## Status update 2026-11-17 (read with Section 8)
+
+- **Mobile app v1 built:** `app/` (Flutter, Android + iOS + web demo). Dashboard, Auto/Manual, device switches, alerts, charts, thresholds, schedules, harvest timer, demo mode. 30 tests pass. Not yet connected to a Firebase project; setup steps in `app/README.md`.
+- **Firebase data contract:** `docs/firebase-schema.md` (extends Section 4 with exact fields, `control/` vs `live/`, schedules, batches).
+- **Original firmware found:** `firmware/original/` (ESP32 body + ESP32-S3 LVGL HMI over UART, DHT22, 1 float switch, no Wi-Fi). Pin map and UART protocol in its README.
+- **Next:** create the Firebase project, then add Wi-Fi + Firebase sync to the controller firmware following `docs/firebase-schema.md`.
+
+---
+
 ## 0. Quick start for the new environment
 
 1. Read Sections 1–9 below (the plan). They are the decisions; do not re-ask val about them.

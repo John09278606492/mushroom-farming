@@ -7,6 +7,8 @@ An ESP32-based controller for a mushroom grow room (humidity, CO2, temperature, 
 - [`docs/harvest-detection-plan.md`](docs/harvest-detection-plan.md): camera + image model plan for "ready to harvest".
 - [`docs/conversation-log.md`](docs/conversation-log.md): full planning conversation with the AI assistant, for context.
 
+- [`app/`](app/): the Flutter mobile app (Android + iPhone): live monitoring, control, charts, schedules, harvest timer, demo mode. Setup in [`app/README.md`](app/README.md).
+- [`docs/firebase-schema.md`](docs/firebase-schema.md): the Firebase data layout shared by the app and the ESP32 firmware.
 - [`firmware/original/`](firmware/original/): the students' original Arduino code (ESP32 controller + ESP32-S3 HMI), pin map and UART protocol.
 
-Planned code layout: `firmware/controller/`, `firmware/hmi/`, `firmware/camera/`, `app/`, `ml/`.
+Planned code layout: `firmware/controller/`, `firmware/hmi/`, `firmware/camera/`, `app/` (done), `ml/`.
