@@ -5,7 +5,7 @@ import '../../logic/alerts.dart';
 import '../../state/farm_state.dart';
 import '../theme.dart';
 
-/// "● Online · 3 s ago" / "● Offline" chip for app bars.
+/// "● Online · 3 s ago" / "● Offline" pill for app bars.
 class ConnectionChip extends StatelessWidget {
   const ConnectionChip({super.key});
 
@@ -32,18 +32,18 @@ class ConnectionChip extends StatelessWidget {
       label: 'Controller status: $text',
       child: Container(
         margin: const EdgeInsets.only(right: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.fromLTRB(4, 3, 12, 3),
         decoration: BoxDecoration(
-          color: sev.background(context),
+          color: color.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.circle, size: 9, color: color),
-            const SizedBox(width: 6),
+            PulseDot(color: color, size: 7, animate: sev == Severity.ok),
             Text(text,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color)),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
           ],
         ),
       ),
@@ -51,7 +51,7 @@ class ConnectionChip extends StatelessWidget {
   }
 }
 
-/// Small "DEMO" badge shown in the app bar title while in demo mode.
+/// Small "DEMO" badge shown next to page titles while in demo mode.
 class DemoBadge extends StatelessWidget {
   const DemoBadge({super.key});
 
@@ -59,19 +59,16 @@ class DemoBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = context.watch<FarmState>();
     if (!s.repo.isDemo) return const SizedBox.shrink();
-    final scheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(left: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: scheme.tertiaryContainer,
+        gradient: AppColors.aiGradient,
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text('DEMO',
-          style: Theme.of(context)
-              .textTheme
-              .labelSmall
-              ?.copyWith(color: scheme.onTertiaryContainer, fontWeight: FontWeight.bold)),
+      child: const Text('DEMO',
+          style: TextStyle(
+              fontSize: 10, color: Colors.white, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
     );
   }
 }

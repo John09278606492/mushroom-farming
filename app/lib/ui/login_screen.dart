@@ -58,7 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final t = Theme.of(context).textTheme;
     final firebaseReady = widget.auth != null;
 
-    return Scaffold(
+    return AiScaffold(
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -70,31 +70,33 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    CircleAvatar(
-                      radius: 40,
-                      backgroundColor: scheme.primaryContainer,
-                      child: Icon(Icons.spa, size: 44, color: scheme.onPrimaryContainer),
+                    const Center(child: _Orb()),
+                    const SizedBox(height: 22),
+                    const Center(
+                      child: GradientText('Smart Mushroom Farm',
+                          gradient: AppColors.aiGradientWide,
+                          style: TextStyle(
+                              fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
                     ),
-                    const SizedBox(height: 16),
-                    Text('Smart Mushroom Farm',
+                    const SizedBox(height: 6),
+                    const Text('Intelligent grow-room monitoring and control',
                         textAlign: TextAlign.center,
-                        style: t.headlineSmall?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    Text('Monitor and control your grow room',
-                        textAlign: TextAlign.center, style: t.bodyMedium),
+                        style: TextStyle(color: AppColors.textDim, fontSize: 14)),
                     const SizedBox(height: 32),
                     if (!firebaseReady)
-                      Card(
-                        color: scheme.secondaryContainer,
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Text(
-                            'This build is not connected to Firebase yet, so sign-in is off. '
-                            'You can still try the app in demo mode.\n\n'
-                            'Setup steps: app/README.md',
-                            style: t.bodyMedium?.copyWith(color: scheme.onSecondaryContainer),
+                      const GlassCard(
+                        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Icon(Icons.cloud_off, color: AppColors.cyan, size: 20),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'This build is not connected to Firebase yet, so sign-in is off. '
+                              'You can still try the app in demo mode.\n\n'
+                              'Setup steps: app/README.md',
+                              style: TextStyle(color: AppColors.text, fontSize: 13.5, height: 1.4),
+                            ),
                           ),
-                        ),
+                        ]),
                       )
                     else ...[
                       TextFormField(
@@ -131,13 +133,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         Text(_error!, style: t.bodyMedium?.copyWith(color: scheme.error)),
                       ],
                       const SizedBox(height: 20),
-                      FilledButton(
-                        onPressed: _busy ? null : _signIn,
-                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                        child: _busy
-                            ? const SizedBox.square(
-                                dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Text('Sign in'),
+                      GradientButton(
+                        label: 'Sign in',
+                        icon: Icons.login,
+                        busy: _busy,
+                        onPressed: _signIn,
                       ),
                       TextButton(onPressed: _busy ? null : _reset, child: const Text('Forgot password?')),
                     ],
@@ -151,13 +151,20 @@ class _LoginScreenState extends State<LoginScreen> {
                       const Expanded(child: Divider()),
                     ]),
                     const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: widget.onDemo,
-                      style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                      icon: const Icon(Icons.science_outlined),
-                      label: const Text('Try demo mode'),
-                    ),
-                    const SizedBox(height: 6),
+                    if (firebaseReady)
+                      OutlinedButton.icon(
+                        onPressed: widget.onDemo,
+                        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                        icon: const Icon(Icons.science_outlined),
+                        label: const Text('Try demo mode'),
+                      )
+                    else
+                      GradientButton(
+                        label: 'Try demo mode',
+                        icon: Icons.science_outlined,
+                        onPressed: widget.onDemo,
+                      ),
+                    const SizedBox(height: 8),
                     Text('A simulated farm. Nothing real is controlled.',
                         textAlign: TextAlign.center, style: t.bodySmall),
                   ],
@@ -167,6 +174,61 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Glowing logo with a slowly rotating gradient ring.
+class _Orb extends StatefulWidget {
+  const _Orb();
+
+  @override
+  State<_Orb> createState() => _OrbState();
+}
+
+class _OrbState extends State<_Orb> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 112,
+      child: Stack(alignment: Alignment.center, children: [
+        Container(
+          width: 112,
+          height: 112,
+          decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [
+            BoxShadow(color: AppColors.violet.withValues(alpha: 0.45), blurRadius: 40),
+            BoxShadow(color: AppColors.cyan.withValues(alpha: 0.25), blurRadius: 60, spreadRadius: 6),
+          ]),
+        ),
+        RotationTransition(
+          turns: _c,
+          child: Container(
+            width: 104,
+            height: 104,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: SweepGradient(
+                colors: [AppColors.cyan, AppColors.violet, AppColors.pink, AppColors.cyan],
+              ),
+            ),
+          ),
+        ),
+        Container(
+          width: 96,
+          height: 96,
+          decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.bg1),
+          child: const Icon(Icons.spa, size: 46, color: AppColors.cyan),
+        ),
+      ]),
     );
   }
 }

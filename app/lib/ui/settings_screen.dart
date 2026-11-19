@@ -21,7 +21,7 @@ class SettingsScreen extends StatelessWidget {
     final sprinklers = s.schedules[ScheduleDevice.sprinkler]!.whereType<Schedule>().length;
     final lights = s.schedules[ScheduleDevice.light]!.whereType<Schedule>().length;
 
-    return Scaffold(
+    return AiScaffold(
       appBar: AppBar(title: const PageTitle('Settings'), actions: const [ConnectionChip()]),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
@@ -125,35 +125,35 @@ class _StageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    return Card(
-      color: selected ? scheme.primaryContainer : null,
-      child: InkWell(
-        onTap: selected ? null : () => _apply(context),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 120),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Icon(stage == GrowthStage.spawnRun ? Icons.dark_mode_outlined : Icons.spa,
-                      color: selected ? scheme.onPrimaryContainer : scheme.primary),
-                  const Spacer(),
-                  if (selected) Icon(Icons.check_circle, color: scheme.onPrimaryContainer),
-                ]),
-                const SizedBox(height: 8),
-                Text(stage.label,
-                    style: t.titleMedium?.copyWith(
-                        color: selected ? scheme.onPrimaryContainer : null,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 2),
-                Text(stage.summary,
-                    style: t.bodySmall?.copyWith(color: selected ? scheme.onPrimaryContainer : null)),
-              ],
-            ),
+    return GlassCard(
+      gradientBorder: selected,
+      glow: selected ? AppColors.violet : null,
+      padding: EdgeInsets.zero,
+      onTap: selected ? null : () => _apply(context),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 124),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(stage == GrowthStage.spawnRun ? Icons.dark_mode_outlined : Icons.spa,
+                    color: selected ? AppColors.cyan : AppColors.textDim),
+                const Spacer(),
+                if (selected) const Icon(Icons.check_circle, color: AppColors.cyan, size: 20),
+              ]),
+              const SizedBox(height: 8),
+              selected
+                  ? GradientText(stage.label,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800))
+                  : Text(stage.label,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.text)),
+              const SizedBox(height: 4),
+              Text(stage.summary, style: t.bodySmall?.copyWith(color: AppColors.textDim)),
+            ],
           ),
         ),
       ),

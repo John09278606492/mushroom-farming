@@ -110,7 +110,11 @@ class _HomeShellState extends State<HomeShell> {
           SettingsScreen(),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
+      bottomNavigationBar: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppColors.glassBorder)),
+        ),
+        child: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: [
@@ -118,23 +122,23 @@ class _HomeShellState extends State<HomeShell> {
             icon: Badge(
               isLabelVisible: alerts > 0,
               label: Text('$alerts'),
-              child: const Icon(Icons.dashboard_outlined),
+              child: const Icon(Icons.space_dashboard_outlined),
             ),
             selectedIcon: Badge(
               isLabelVisible: alerts > 0,
               label: Text('$alerts'),
-              child: const Icon(Icons.dashboard),
+              child: const Icon(Icons.space_dashboard),
             ),
             label: 'Home',
           ),
           const NavigationDestination(
-            icon: Icon(Icons.show_chart_outlined),
-            selectedIcon: Icon(Icons.show_chart),
+            icon: Icon(Icons.insights_outlined),
+            selectedIcon: Icon(Icons.insights),
             label: 'History',
           ),
           const NavigationDestination(
-            icon: Icon(Icons.spa_outlined),
-            selectedIcon: Icon(Icons.spa),
+            icon: Icon(Icons.center_focus_weak),
+            selectedIcon: Icon(Icons.center_focus_strong),
             label: 'Harvest',
           ),
           const NavigationDestination(
@@ -143,6 +147,7 @@ class _HomeShellState extends State<HomeShell> {
             label: 'Settings',
           ),
         ],
+        ),
       ),
     );
   }

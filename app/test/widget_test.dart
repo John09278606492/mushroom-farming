@@ -5,6 +5,11 @@ import 'package:mushroom_farm/main.dart';
 void main() {
   testWidgets('without Firebase: login offers demo, demo shows the dashboard',
       (tester) async {
+    // A tall phone-shaped screen so the whole dashboard is built.
+    tester.view.physicalSize = const Size(420, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
     await tester.pumpWidget(const MushroomApp(firebaseReady: false));
     expect(find.text('Smart Mushroom Farm'), findsOneWidget);
     expect(find.text('Sign in'), findsNothing);

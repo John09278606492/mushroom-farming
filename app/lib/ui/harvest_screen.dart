@@ -19,7 +19,7 @@ class HarvestScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = context.watch<FarmState>();
     final past = s.batches.where((b) => !b.isOpen).toList();
-    return Scaffold(
+    return AiScaffold(
       appBar: AppBar(title: const PageTitle('Harvest'), actions: const [ConnectionChip()]),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -64,21 +64,42 @@ class _CameraCard extends StatelessWidget {
     final shot = s.camera;
     final result = s.harvest;
     final t = Theme.of(context).textTheme;
-    final scheme = Theme.of(context).colorScheme;
 
-    return Card(
+    return GlassCard(
+      gradientBorder: true,
+      glow: AppColors.cyan,
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            child: Row(children: [
+              const Icon(Icons.center_focus_strong, color: AppColors.cyan, size: 20),
+              const SizedBox(width: 8),
+              const GradientText('AI Harvest Vision',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              if (shot != null)
+                Text(timeAgo(shot.ts, s.now),
+                    style: const TextStyle(fontSize: 12, color: AppColors.textDim)),
+            ]),
+          ),
           AspectRatio(
             aspectRatio: 4 / 3,
             child: shot == null
                 ? Container(
-                    color: scheme.surfaceContainerHighest,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [AppColors.cyan.withValues(alpha: 0.08), AppColors.violet.withValues(alpha: 0.10)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.photo_camera_outlined, size: 48, color: scheme.outline),
+                        Icon(Icons.photo_camera_outlined, size: 48, color: AppColors.cyan.withValues(alpha: 0.7)),
                         const SizedBox(height: 8),
                         const Text('No photo yet'),
                         Padding(
@@ -145,7 +166,14 @@ class _ResultRow extends StatelessWidget {
       _ => Severity.info,
     };
     final color = sev.color(context);
-    return Row(children: [
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(children: [
       Icon(sev == Severity.ok ? Icons.celebration : sev.icon, color: color),
       const SizedBox(width: 8),
       Expanded(
@@ -157,7 +185,8 @@ class _ResultRow extends StatelessWidget {
       ),
       Text('${(result.confidence * 100).round()}% sure',
           style: Theme.of(context).textTheme.bodySmall),
-    ]);
+    ]),
+    );
   }
 }
 
@@ -185,13 +214,13 @@ class _BatchCard extends StatelessWidget {
                 style: t.bodyMedium,
               ),
               const SizedBox(height: 12),
-              FilledButton.icon(
+              GradientButton(
                 onPressed: () async {
                   final err = await s.startBatch();
                   if (context.mounted) showMessage(context, err ?? 'Pinning day saved.');
                 },
-                icon: const Icon(Icons.spa),
-                label: const Text('Pinning started today'),
+                icon: Icons.spa,
+                label: 'Pinning started today',
               ),
             ],
           ),
@@ -220,21 +249,21 @@ class _BatchCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              Text('Day $day', style: t.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
-              const SizedBox(width: 8),
-              Text('since pinning', style: t.bodyMedium),
-            ]),
+            Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.end,
+              children: [
+                GradientText('Day $day',
+                    style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text('since pinning', style: t.bodyMedium),
+                ),
+              ],
+            ),
             Text('Pinned ${formatDate(batch.pinnedAt)}', style: t.bodySmall),
             const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: (day / readyToDay).clamp(0, 1),
-                minHeight: 8,
-                color: sev.color(context),
-              ),
-            ),
+            _GlowBar(value: (day / readyToDay).clamp(0, 1).toDouble(), color: sev.color(context)),
             const SizedBox(height: 4),
             Row(children: [
               Text('Day 1', style: t.labelSmall),
@@ -290,5 +319,36 @@ class _BatchCard extends StatelessWidget {
     final err = await s.finishBatch(batch.id,
         weightG: double.tryParse(weight.text), notes: notes.text.trim());
     if (context.mounted) showMessage(context, err ?? 'Harvest saved. Nice work!');
+  }
+}
+
+/// Rounded progress bar with a glowing gradient fill.
+class _GlowBar extends StatelessWidget {
+  const _GlowBar({required this.value, required this.color});
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, c) {
+      return Stack(children: [
+        Container(
+          height: 10,
+          decoration: BoxDecoration(
+            color: AppColors.glassStrong,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        Container(
+          height: 10,
+          width: c.maxWidth * value,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [AppColors.cyan, color]),
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: [BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 10)],
+          ),
+        ),
+      ]);
+    });
   }
 }

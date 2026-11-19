@@ -70,7 +70,7 @@ class _ThresholdsScreenState extends State<ThresholdsScreen> {
         if (didPop) return;
         if (await _confirmDiscard() && context.mounted) Navigator.of(context).pop();
       },
-      child: Scaffold(
+      child: AiScaffold(
         appBar: AppBar(title: const Text('Targets & thresholds')),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -133,13 +133,11 @@ class _ThresholdsScreenState extends State<ThresholdsScreen> {
         bottomNavigationBar: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: FilledButton(
-              onPressed: _dirty && !_saving ? _save : null,
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: _saving
-                  ? const SizedBox.square(
-                      dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : Text(_dirty ? 'Save changes' : 'No changes'),
+            child: GradientButton(
+              label: _dirty ? 'Save changes' : 'No changes',
+              icon: _dirty ? Icons.check : null,
+              busy: _saving,
+              onPressed: _dirty ? _save : null,
             ),
           ),
         ),
@@ -188,7 +186,7 @@ class _RangeCard extends StatelessWidget {
             Row(children: [
               Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
               const SizedBox(width: 8),
-              Text(title, style: t.titleMedium),
+              Expanded(child: Text(title, style: t.titleMedium)),
             ]),
             const SizedBox(height: 4),
             Text(help, style: t.bodySmall),

@@ -11,7 +11,7 @@ class SchedulesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AiScaffold(
       appBar: AppBar(title: const Text('Schedules')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),

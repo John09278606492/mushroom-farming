@@ -31,8 +31,8 @@ class MushroomApp extends StatelessWidget {
     return MaterialApp(
       title: 'Smart Mushroom Farm',
       debugShowCheckedModeBanner: false,
-      theme: buildTheme(Brightness.light),
-      darkTheme: buildTheme(Brightness.dark),
+      theme: buildTheme(),
+      themeMode: ThemeMode.dark,
       home: AppRoot(firebaseReady: firebaseReady),
     );
   }
@@ -70,7 +70,7 @@ class _AppRootState extends State<AppRoot> {
       stream: _userStream,
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return const AiScaffold(body: Center(child: CircularProgressIndicator()));
         }
         final user = snap.data;
         if (user == null) return login;
