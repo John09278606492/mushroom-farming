@@ -4,3 +4,6 @@ firmware/original/libraries/*
 
 # Local preview config
 .claude/
+
+# Local flash backups of the boards (large binaries)
+firmware/backup/
