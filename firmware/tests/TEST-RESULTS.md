@@ -39,8 +39,11 @@ The box had been rewired by others, so every pin was checked by hand.
 |---|---|---|
 | Float switch | GPIO18 (pull-up, LOW = water low) | OK. Bounces when the water moves; firmware needs a 1-2 s debounce |
 | CO2 (MH-Z19 style UART) | RX 16 / TX 17, 9600 | OK, 718-1025 ppm indoors |
-| Temp/humidity (DHT22) | GPIO4 expected | No reply (DHT22 or DHT11), even with the breaker on and GPIO4 pulled high. Check the sensor type label and the data wire |
-| DS3231 RTC | I2C SDA 21 / SCL 22 | Powered (LED on) but no I2C reply, also with SDA/SCL swapped. Check the SDA/SCL wires and where they land on the ESP32 |
+| Temp/humidity: ASAIR AM2302 (wired DHT22, built-in pull-up) | GPIO4, VCC 3.3V | OK: 26.4 °C / 96 % RH. The signal has short glitches on its edges that the Adafruit DHT and DHTesp libraries (esp32 core 4.0) reject as checksum errors. The tester's `dhtraw` reader merges glitches under 8 µs and gets about 6 of 10 reads with a good checksum and no wrong values. Use this reader in the firmware and keep the last good value |
+| DS3231 RTC (+ AT24C32 EEPROM) | I2C SDA 21 / SCL 22 | OK: answers at 0x68 and 0x57. Was at 2000-01-11 with `lostPower=1`; set to PC time on 2026-11-21 (`rtcset`), now `lostPower=0`. Check the coin cell so it keeps time with the power off |
+
+Do not power the AM2302 from 5V: its internal pull-up is tied to VCC, so GPIO4
+would see 5V.
 
 The sensors are powered from the box supply, so the breaker must be on when
 reading them (CO2 gave no reply with the breaker off).

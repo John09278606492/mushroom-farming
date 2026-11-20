@@ -21,6 +21,7 @@
 
 #include <Wire.h>
 #include <DHT.h>
+#include <DHTesp.h>
 #include <RTClib.h>
 
 const int SAFE[] = {4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33};
@@ -126,6 +127,101 @@ void cmdDht(int pin, int type) {
   else Serial.printf("OK dht GPIO%d temp=%.1fC rh=%.1f%%\n", pin, t, h);
 }
 
+// Read a DHT22 several times with the DHTesp library and report the success rate.
+void cmdDhtEsp(int pin, int tries) {
+  if (!isReadable(pin)) { Serial.printf("ERR GPIO%d is not readable\n", pin); return; }
+  if (tries < 1 || tries > 20) tries = 5;
+  DHTesp d;
+  d.setup(pin, DHTesp::DHT22);
+  int ok = 0;
+  for (int i = 0; i < tries; i++) {
+    delay(d.getMinimumSamplingPeriod() + 100);
+    TempAndHumidity v = d.getTempAndHumidity();
+    if (d.getStatus() == DHTesp::ERROR_NONE) {
+      ok++;
+      Serial.printf("  try %d: temp=%.1fC rh=%.1f%%\n", i + 1, v.temperature, v.humidity);
+    } else {
+      Serial.printf("  try %d: %s\n", i + 1, d.getStatusString());
+    }
+  }
+  Serial.printf("OK dhtx GPIO%d %d/%d good reads\n", pin, ok, tries);
+}
+
+// Read a DHT22/AM2302 by timing the raw pulses ourselves (no library).
+// Prints the high-pulse widths so a bad signal can be told apart from bad timing.
+void cmdDhtRaw(int pin, int tries) {
+  if (!isReadable(pin)) { Serial.printf("ERR GPIO%d is not readable\n", pin); return; }
+  if (tries < 1 || tries > 20) tries = 3;
+  int good = 0;
+  for (int k = 0; k < tries; k++) {
+    delay(2500);
+    const int MAXE = 240;
+    uint16_t dur[MAXE];
+    uint8_t lvl[MAXE];
+    int n = 0;
+    const uint32_t mhz = ESP.getCpuFreqMHz();
+    static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+    delay(2);                       // start signal: >1 ms low
+    portENTER_CRITICAL(&mux);
+    pinMode(pin, INPUT_PULLUP);
+    int last = digitalRead(pin);
+    uint32_t edge = esp_cpu_get_cycle_count();
+    while (n < MAXE) {
+      uint32_t now = esp_cpu_get_cycle_count();
+      int v = digitalRead(pin);
+      uint32_t us = (now - edge) / mhz;
+      if (v != last) {
+        dur[n] = us; lvl[n] = last; n++;
+        edge = now; last = v;
+      } else if (us > 300) {
+        break;
+      }
+    }
+    portEXIT_CRITICAL(&mux);
+
+    // High intervals: [before response][response ~80us][40 data bits]
+    // A slow edge can toggle a few times around the threshold, splitting one level
+    // into pieces. Merge any piece shorter than 8 us (and the piece after it)
+    // back into the level before it.
+    int m = 0;
+    for (int i = 0; i < n; i++) {
+      if (m > 0 && dur[i] < 8) {
+        dur[m - 1] += dur[i];
+        if (i + 1 < n) { dur[m - 1] += dur[i + 1]; i++; }
+        continue;
+      }
+      dur[m] = dur[i]; lvl[m] = lvl[i]; m++;
+    }
+    n = m;
+    // The data starts after the ~80 us response pulse; anything after the
+    // 40th bit is ignored.
+    uint16_t highs[60];
+    int nh = 0;
+    for (int i = 0; i < n && nh < 60; i++) if (lvl[i] == 1) highs[nh++] = dur[i];
+    int startAt = -1;
+    for (int i = 0; i < nh; i++) if (highs[i] >= 60 && highs[i] <= 110) { startAt = i + 1; break; }
+    Serial.printf("  try %d: %d edges, %d highs, data from #%d\n", k + 1, n, nh, startAt);
+    if (startAt < 0 || nh - startAt < 40) { Serial.println("    too few bits"); continue; }
+
+    uint8_t b[5] = {0};
+    for (int i = 0; i < 40; i++) {
+      int bit = highs[startAt + i] > 48 ? 1 : 0;
+      b[i / 8] = (b[i / 8] << 1) | bit;
+    }
+    bool ok = (uint8_t)(b[0] + b[1] + b[2] + b[3]) == b[4];
+    float rh = ((b[0] << 8) | b[1]) / 10.0;
+    float t = (((b[2] & 0x7F) << 8) | b[3]) / 10.0;
+    if (b[2] & 0x80) t = -t;
+    Serial.printf("    bytes %02X %02X %02X %02X %02X  checksum %s  temp=%.1fC rh=%.1f%%\n",
+                  b[0], b[1], b[2], b[3], b[4], ok ? "OK" : "BAD", t, rh);
+    if (ok) good++;
+  }
+  Serial.printf("OK dhtraw GPIO%d %d/%d good reads\n", pin, good, tries);
+}
+
 void cmdCo2(int rx, int tx) {
   if (!isReadable(rx) || !isSafe(tx)) { Serial.println("ERR bad pins"); return; }
   HardwareSerial co2(2);
@@ -179,6 +275,22 @@ void cmdRtc(int sda, int scl) {
   Serial.printf("OK rtc %04d-%02d-%02d %02d:%02d:%02d temp=%.2fC lostPower=%d\n",
                 n.year(), n.month(), n.day(), n.hour(), n.minute(), n.second(),
                 rtc.getTemperature(), rtc.lostPower() ? 1 : 0);
+}
+
+// rtcset <sda> <scl> <year> <month> <day> <hour> <minute> <second>
+void cmdRtcSet(int sda, int scl, int y, int mo, int d, int h, int mi, int s) {
+  if (!startI2c(sda, scl)) return;
+  RTC_DS3231 rtc;
+  if (!rtc.begin(&Wire)) { Serial.println("ERR rtc not found"); return; }
+  if (y < 2024 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) {
+    Serial.println("ERR bad date/time");
+    return;
+  }
+  rtc.adjust(DateTime(y, mo, d, h, mi, s));
+  DateTime n = rtc.now();
+  Serial.printf("OK rtcset now %04d-%02d-%02d %02d:%02d:%02d lostPower=%d\n",
+                n.year(), n.month(), n.day(), n.hour(), n.minute(), n.second(),
+                rtc.lostPower() ? 1 : 0);
 }
 
 void cmdSht(int sda, int scl) {
@@ -251,6 +363,44 @@ void cmdDhtFind() {
   Serial.printf("OK dhtfind done, %d hit(s)\n", hits);
 }
 
+// Bit-banged I2C address scan that does not use the Wire library at all.
+static int swSda, swScl;
+static void swRelease(int p) { pinMode(p, INPUT_PULLUP); }
+static void swLow(int p) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
+static void swDelay() { delayMicroseconds(10); }  // ~50 kHz
+static void swStart() { swRelease(swSda); swRelease(swScl); swDelay(); swLow(swSda); swDelay(); swLow(swScl); swDelay(); }
+static void swStop() { swLow(swSda); swDelay(); swRelease(swScl); swDelay(); swRelease(swSda); swDelay(); }
+static bool swWrite(uint8_t b) {
+  for (int i = 7; i >= 0; i--) {
+    if (b & (1 << i)) swRelease(swSda); else swLow(swSda);
+    swDelay(); swRelease(swScl); swDelay(); swLow(swScl);
+  }
+  swRelease(swSda); swDelay(); swRelease(swScl); swDelay();
+  bool ack = digitalRead(swSda) == LOW;
+  swLow(swScl); swDelay();
+  return ack;
+}
+
+void cmdSwI2c(int sda, int scl) {
+  if (!isSafe(sda) || !isSafe(scl)) { Serial.println("ERR bad pins"); return; }
+  Wire.end();
+  swSda = sda; swScl = scl;
+  swRelease(sda); swRelease(scl);
+  delay(2);
+  Serial.printf("  idle levels: SDA=%d SCL=%d (both should be 1)\n", digitalRead(sda), digitalRead(scl));
+  Serial.print("OK swi2c");
+  int found = 0;
+  for (uint8_t a = 0x08; a < 0x78; a++) {
+    swStart();
+    bool ack = swWrite(a << 1);
+    swStop();
+    if (ack) { Serial.printf(" 0x%02X", a); found++; }
+  }
+  if (!found) Serial.print(" none");
+  Serial.println();
+  pinMode(sda, INPUT); pinMode(scl, INPUT);
+}
+
 void help() {
   Serial.println("OK commands: info | out <pin> <0|1> | pulse <pin> <ms> [0|1] | release <pin|all> |");
   Serial.println("   in <pin> | scan | watch <pin|off> | dht <pin> [22|11] | co2 <rx> <tx> |");
@@ -287,11 +437,17 @@ void handle(String s) {
     Serial.printf("OK watch GPIO%d now=%s\n", a, watchLast ? "HIGH" : "LOW");
   }
   else if (c == "dht" && w1.length()) cmdDht(a, w2.length() ? b : 22);
+  else if (c == "dhtx" && w1.length()) cmdDhtEsp(a, w2.length() ? b : 5);
+  else if (c == "dhtraw" && w1.length()) cmdDhtRaw(a, w2.length() ? b : 3);
   else if (c == "co2" && w2.length()) cmdCo2(a, b);
   else if (c == "i2c" && w2.length()) cmdI2c(a, b);
   else if (c == "rtc" && w2.length()) cmdRtc(a, b);
   else if (c == "sht" && w2.length()) cmdSht(a, b);
   else if (c == "i2cfind") cmdI2cFind();
+  else if (c == "swi2c" && w2.length()) cmdSwI2c(a, b);
+  else if (c == "rtcset" && word(s, 8).length())
+    cmdRtcSet(a, b, word(s, 3).toInt(), word(s, 4).toInt(), word(s, 5).toInt(),
+              word(s, 6).toInt(), word(s, 7).toInt(), word(s, 8).toInt());
   else if (c == "dhtfind") cmdDhtFind();
   else Serial.printf("ERR unknown command: %s (type help)\n", s.c_str());
 }
