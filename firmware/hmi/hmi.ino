@@ -69,10 +69,35 @@ void my_disp_flush(lv_display_t *d,const lv_area_t *a,uint8_t *px){
   gfx->draw16bitRGBBitmap(a->x1,a->y1,(uint16_t*)px,a->x2-a->x1+1,a->y2-a->y1+1);
   lv_display_flush_ready(d);
 }
+// Touch with a filter. The GT911 sometimes reports a short touch at a random
+// spot (noise from the box), which pressed buttons nobody touched. A press only
+// counts after 3 reads in a row land in the same place; while pressed, a sudden
+// far jump is ignored; a release needs 2 empty reads in a row.
 void my_touch_read(lv_indev_t *drv,lv_indev_data_t *data){
+  static bool down=false;
+  static int16_t px=0,py=0;      // point reported to LVGL
+  static int16_t cx=-1,cy=-1;    // candidate for a new press
+  static uint8_t same=0,empty=0;
   ts.read();
-  if(ts.isTouched){data->state=LV_INDEV_STATE_PRESSED;data->point.x=ts.points[0].x;data->point.y=ts.points[0].y;}
-  else data->state=LV_INDEV_STATE_RELEASED;
+  bool t=ts.isTouched&&ts.touches>=1;
+  int16_t x=ts.points[0].x,y=ts.points[0].y;
+  if(t&&(x<0||x>=SCREEN_W||y<0||y>=SCREEN_H))t=false;
+
+  if(t){
+    empty=0;
+    if(!down){
+      if(cx>=0&&abs(x-cx)<30&&abs(y-cy)<30){if(same<255)same++;}else same=0;
+      cx=x;cy=y;
+      if(same>=2){down=true;px=x;py=y;}
+    }else if(abs(x-px)<150&&abs(y-py)<150){
+      px=x;py=y;                 // normal drag
+    }
+  }else{
+    cx=-1;same=0;
+    if(down&&++empty>=2)down=false;
+  }
+  data->point.x=px;data->point.y=py;
+  data->state=down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;
 }
 
 // =====================================================
@@ -583,7 +608,13 @@ void updateHome(){
   bool st[4]={sprinklerState,lightState,mistState,fanState};
   for(int i=0;i<4;i++){
     Tile&t=*tiles[i];
-    if(millis()>t.holdUntil){setChecked(t.sw,st[i]);tileLook(t,st[i]);}
+    if(t.holdUntil&&millis()<=t.holdUntil){
+      if(st[i]==t.want)t.holdUntil=0;                       // body confirmed
+      else if(millis()-t.sentAt>1000&&t.retries<2){         // lost on the wire: send again
+        t.retries++;t.sentAt=millis();sendCommand(t.want?t.onCmd:t.offCmd);
+      }
+    }
+    if(!t.holdUntil||millis()>t.holdUntil){t.holdUntil=0;setChecked(t.sw,st[i]);tileLook(t,st[i]);}
   }
 
   // --- water + mode + schedules
@@ -675,7 +706,9 @@ void cb_tileSwitch(lv_event_t*e){
   int i=(int)(intptr_t)lv_event_get_user_data(e);Tile&t=*tiles[i];
   bool on=lv_obj_has_state(t.sw,LV_STATE_CHECKED);
   if(!needBody()){setChecked(t.sw,!on);return;}
-  t.holdUntil=millis()+4000;   // give the body time to answer before the switch follows STATUS again
+  // Show the new state now; follow STATUS again once the body confirms it,
+  // or after 3 s if it never does.
+  t.want=on;t.sentAt=millis();t.retries=0;t.holdUntil=millis()+3000;
   tileLook(t,on);
   sendCommand(on?t.onCmd:t.offCmd);sendCommand("GET_STATUS");
 }
@@ -792,9 +825,13 @@ void buildHome(){
   lv_obj_set_pos(clk,380,8);lv_obj_set_size(clk,230,58);
   lv_obj_set_style_radius(clk,14,0);lv_obj_set_style_bg_opa(clk,LV_OPA_COVER,0);
   lv_obj_set_style_bg_color(clk,C_BG,0);
-  makeTappable(clk,cb_goRTC);lv_obj_remove_flag(clk,LV_OBJ_FLAG_SCROLLABLE);
+  // Opens on a long press only, so a stray touch cannot open the clock page.
+  lv_obj_add_flag(clk,LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(clk,C_SURF2,LV_STATE_PRESSED);
+  lv_obj_add_event_cb(clk,cb_goRTC,LV_EVENT_LONG_PRESSED,NULL);
+  lv_obj_remove_flag(clk,LV_OBJ_FLAG_SCROLLABLE);
   lblTime=txt(clk,"--:--",F28,C_TEXT,0,0);lv_obj_align(lblTime,LV_ALIGN_TOP_RIGHT,-10,0);
-  lblDate=txt(clk,"Tap to set the clock",F14,C_MUTED,0,0);lv_obj_align(lblDate,LV_ALIGN_TOP_RIGHT,-10,34);
+  lblDate=txt(clk,"Hold to set the clock",F14,C_MUTED,0,0);lv_obj_align(lblDate,LV_ALIGN_TOP_RIGHT,-10,34);
   connectionPill(pgHome);
 
   // sensors
@@ -1009,10 +1046,11 @@ void loop(){
   while(bodySerial.available()){
     char c=(char)bodySerial.read();
     if(c=='\n'){
-      rx.trim();
-      if(rx.startsWith("STATUS,")){parseStatus(rx);gotStatus=true;}
+      // Noise on the wire can put junk in front of a line: start at "STATUS,".
+      int k=rx.indexOf("STATUS,");
+      if(k>=0){String line=rx.substring(k);line.trim();parseStatus(line);gotStatus=true;}
       rx="";
-    }else if(c!='\r'&&rx.length()<600){
+    }else if(c>=0x20&&c<=0x7E&&rx.length()<600){
       rx+=c;
     }
   }
