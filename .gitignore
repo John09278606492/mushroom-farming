@@ -7,3 +7,6 @@ firmware/original/libraries/*
 
 # Local flash backups of the boards (large binaries)
 firmware/backup/
+
+# Arduino compile output
+firmware/**/build/
