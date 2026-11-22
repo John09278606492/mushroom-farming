@@ -58,7 +58,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final t = Theme.of(context).textTheme;
     final firebaseReady = widget.auth != null;
 
-    return AiScaffold(
+    return AppScaffold(
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -70,30 +70,31 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Center(child: _Orb()),
-                    const SizedBox(height: 22),
-                    const Center(
-                      child: GradientText('Smart Mushroom Farm',
-                          gradient: AppColors.aiGradientWide,
-                          style: TextStyle(
-                              fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text('Intelligent grow-room monitoring and control',
+                    const Center(child: _Mark()),
+                    const SizedBox(height: 20),
+                    const Text('Mushroom Farm',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: AppColors.textDim, fontSize: 14)),
+                        style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.6,
+                            color: AppColors.ink)),
+                    const SizedBox(height: 6),
+                    const Text('Grow room monitoring and control',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AppColors.inkDim, fontSize: 15)),
                     const SizedBox(height: 32),
                     if (!firebaseReady)
-                      const GlassCard(
+                      const Panel(
                         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Icon(Icons.cloud_off, color: AppColors.cyan, size: 20),
+                          Icon(Icons.cloud_off_outlined, color: AppColors.inkDim, size: 20),
                           SizedBox(width: 10),
                           Expanded(
                             child: Text(
                               'This build is not connected to Firebase yet, so sign-in is off. '
                               'You can still try the app in demo mode.\n\n'
                               'Setup steps: app/README.md',
-                              style: TextStyle(color: AppColors.text, fontSize: 13.5, height: 1.4),
+                              style: TextStyle(color: AppColors.ink, fontSize: 13.5, height: 1.4),
                             ),
                           ),
                         ]),
@@ -133,7 +134,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         Text(_error!, style: t.bodyMedium?.copyWith(color: scheme.error)),
                       ],
                       const SizedBox(height: 20),
-                      GradientButton(
+                      PrimaryButton(
                         label: 'Sign in',
                         icon: Icons.login,
                         busy: _busy,
@@ -159,9 +160,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         label: const Text('Try demo mode'),
                       )
                     else
-                      GradientButton(
+                      PrimaryButton(
                         label: 'Try demo mode',
-                        icon: Icons.science_outlined,
                         onPressed: widget.onDemo,
                       ),
                     const SizedBox(height: 8),
@@ -178,57 +178,53 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-/// Glowing logo with a slowly rotating gradient ring.
-class _Orb extends StatefulWidget {
-  const _Orb();
-
-  @override
-  State<_Orb> createState() => _OrbState();
-}
-
-class _OrbState extends State<_Orb> with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat();
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
+/// The app mark: a mushroom drawn with plain shapes on a moss tile.
+class _Mark extends StatelessWidget {
+  const _Mark();
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox.square(
-      dimension: 112,
-      child: Stack(alignment: Alignment.center, children: [
-        Container(
-          width: 112,
-          height: 112,
-          decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [
-            BoxShadow(color: AppColors.violet.withValues(alpha: 0.45), blurRadius: 40),
-            BoxShadow(color: AppColors.cyan.withValues(alpha: 0.25), blurRadius: 60, spreadRadius: 6),
-          ]),
-        ),
-        RotationTransition(
-          turns: _c,
-          child: Container(
-            width: 104,
-            height: 104,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: SweepGradient(
-                colors: [AppColors.cyan, AppColors.violet, AppColors.pink, AppColors.cyan],
-              ),
-            ),
-          ),
-        ),
-        Container(
-          width: 96,
-          height: 96,
-          decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.bg1),
-          child: const Icon(Icons.spa, size: 46, color: AppColors.cyan),
-        ),
-      ]),
+    return Container(
+      width: 76,
+      height: 76,
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: const CustomPaint(painter: _MushroomPainter()),
     );
   }
+}
+
+class _MushroomPainter extends CustomPainter {
+  const _MushroomPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final cream = Paint()..color = AppColors.lime;
+    // stem
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * 0.40, h * 0.46, w * 0.20, h * 0.32),
+        Radius.circular(w * 0.08),
+      ),
+      cream,
+    );
+    // cap
+    final cap = Path()
+      ..moveTo(w * 0.18, h * 0.52)
+      ..quadraticBezierTo(w * 0.20, h * 0.20, w * 0.50, h * 0.20)
+      ..quadraticBezierTo(w * 0.80, h * 0.20, w * 0.82, h * 0.52)
+      ..close();
+    canvas.drawPath(cap, cream);
+    // spots
+    final spot = Paint()..color = AppColors.primary;
+    canvas.drawCircle(Offset(w * 0.38, h * 0.36), w * 0.045, spot);
+    canvas.drawCircle(Offset(w * 0.58, h * 0.31), w * 0.035, spot);
+    canvas.drawCircle(Offset(w * 0.66, h * 0.44), w * 0.03, spot);
+  }
+
+  @override
+  bool shouldRepaint(_MushroomPainter old) => false;
 }

@@ -5,7 +5,7 @@ import '../../logic/alerts.dart';
 import '../../state/farm_state.dart';
 import '../theme.dart';
 
-/// "● Online · 3 s ago" / "● Offline" pill for app bars.
+/// "● Online · 3 s ago" / "● Offline" status for app bars.
 class ConnectionChip extends StatelessWidget {
   const ConnectionChip({super.key});
 
@@ -31,19 +31,20 @@ class ConnectionChip extends StatelessWidget {
     return Semantics(
       label: 'Controller status: $text',
       child: Container(
-        margin: const EdgeInsets.only(right: 12),
-        padding: const EdgeInsets.fromLTRB(4, 3, 12, 3),
+        margin: const EdgeInsets.only(right: 14),
+        padding: const EdgeInsets.fromLTRB(2, 5, 10, 5),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.line),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            PulseDot(color: color, size: 7, animate: sev == Severity.ok),
+            StatusDot(color: color, size: 7),
             Text(text,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.inkDim)),
           ],
         ),
       ),
@@ -51,7 +52,7 @@ class ConnectionChip extends StatelessWidget {
   }
 }
 
-/// Small "DEMO" badge shown next to page titles while in demo mode.
+/// Small "Demo" tag shown next to page titles while in demo mode.
 class DemoBadge extends StatelessWidget {
   const DemoBadge({super.key});
 
@@ -60,20 +61,19 @@ class DemoBadge extends StatelessWidget {
     final s = context.watch<FarmState>();
     if (!s.repo.isDemo) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.only(left: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      margin: const EdgeInsets.only(left: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        gradient: AppColors.aiGradient,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppColors.ochre.withValues(alpha: 0.6)),
       ),
-      child: const Text('DEMO',
-          style: TextStyle(
-              fontSize: 10, color: Colors.white, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
+      child: const Text('Demo',
+          style: TextStyle(fontSize: 11, color: AppColors.ochre, fontWeight: FontWeight.w700)),
     );
   }
 }
 
-/// App bar title with the demo badge.
+/// App bar title with the demo tag.
 class PageTitle extends StatelessWidget {
   const PageTitle(this.title, {super.key});
   final String title;

@@ -1,4 +1,4 @@
-// The "Farm Assistant" summary: a health score and short, plain-language
+// The room summary on the home screen: a health score and short, plain-language
 // tips built from the live readings. Rule-based (no AI model), pure, tested.
 
 import '../models/farm_models.dart';
@@ -33,7 +33,7 @@ FarmInsight computeInsight(LiveData live, Setpoints sp, DateTime now, {Batch? op
   if (!live.isOnline(now)) {
     return const FarmInsight(
       score: null,
-      headline: 'I can\'t reach the controller',
+      headline: 'The controller is not reachable',
       tips: [
         'The farm keeps running on its own rules.',
         'Check the pocket WiFi load and the controller power.',

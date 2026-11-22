@@ -1,10 +1,15 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../data/farm_repository.dart';
+import '../logic/notices.dart';
+import '../services/notification_service.dart';
 import '../state/farm_state.dart';
+import 'analytics_screen.dart';
 import 'charts_screen.dart';
 import 'dashboard_screen.dart';
 import 'harvest_screen.dart';
@@ -52,9 +57,21 @@ class FarmScope extends StatefulWidget {
 class _FarmScopeState extends State<FarmScope> {
   late final FarmRepository _repo = widget.createRepository();
   late final FarmState _state = FarmState(_repo);
+  late final StreamSubscription<Notice> _notices =
+      _state.notices.listen(NotificationService.instance.show);
+
+  @override
+  void initState() {
+    super.initState();
+    _notices; // start forwarding alerts to the phone
+    final n = NotificationService.instance;
+    // Android 13+ and iOS ask once; a browser only asks after a tap (Settings).
+    if (n.ready && !n.allowed && n.enabled && !kIsWeb) n.requestPermission();
+  }
 
   @override
   void dispose() {
+    _notices.cancel();
     _state.dispose();
     _repo.dispose();
     super.dispose();
@@ -82,18 +99,28 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
   StreamSubscription<String>? _messages;
+  StreamSubscription<Notice>? _alerts;
 
   @override
   void initState() {
     super.initState();
-    _messages = context.read<FarmState>().messages.listen((m) {
+    final s = context.read<FarmState>();
+    _messages = s.messages.listen((m) {
       if (mounted) showMessage(context, m);
+    });
+    // When the system tray can't show it (browser without permission,
+    // notifications off), still tell the user inside the app.
+    _alerts = s.notices.listen((n) {
+      final svc = NotificationService.instance;
+      if (!mounted || (svc.canShow && svc.wants(n))) return;
+      showMessage(context, '${n.title}. ${n.body}');
     });
   }
 
   @override
   void dispose() {
     _messages?.cancel();
+    _alerts?.cancel();
     super.dispose();
   }
 
@@ -106,47 +133,119 @@ class _HomeShellState extends State<HomeShell> {
         children: const [
           DashboardScreen(),
           ChartsScreen(),
+          AnalyticsScreen(),
           HarvestScreen(),
           SettingsScreen(),
         ],
       ),
-      bottomNavigationBar: DecoratedBox(
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.glassBorder)),
+      backgroundColor: AppColors.bg,
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+          child: _PillBar(
+            index: _index,
+            alerts: alerts,
+            onSelect: (i) => setState(() => _index = i),
+          ),
         ),
-        child: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: [
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: alerts > 0,
-              label: Text('$alerts'),
-              child: const Icon(Icons.space_dashboard_outlined),
+      ),
+    );
+  }
+}
+
+/// Floating black bottom bar. The selected tab grows into a lime pill with
+/// its label; the others stay as icons.
+class _PillBar extends StatelessWidget {
+  const _PillBar({required this.index, required this.alerts, required this.onSelect});
+  final int index;
+  final int alerts;
+  final ValueChanged<int> onSelect;
+
+  static const _items = [
+    (Icons.home_rounded, 'Home'),
+    (Icons.show_chart_rounded, 'History'),
+    (Icons.insights_rounded, 'Analytics'),
+    (Icons.eco_rounded, 'Harvest'),
+    (Icons.tune_rounded, 'Settings'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 64,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: AppColors.night,
+        borderRadius: BorderRadius.circular(32),
+      ),
+      child: Row(children: [
+        for (var i = 0; i < _items.length; i++)
+          Expanded(
+            flex: i == index ? 2 : 1,
+            child: _PillItem(
+              icon: _items[i].$1,
+              label: _items[i].$2,
+              selected: i == index,
+              badge: i == 0 ? alerts : 0,
+              onTap: () => onSelect(i),
             ),
-            selectedIcon: Badge(
-              isLabelVisible: alerts > 0,
-              label: Text('$alerts'),
-              child: const Icon(Icons.space_dashboard),
+          ),
+      ]),
+    );
+  }
+}
+
+class _PillItem extends StatelessWidget {
+  const _PillItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.badge,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final int badge;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const dur = Duration(milliseconds: 380);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: dur,
+          curve: Curves.easeOutCubic,
+          margin: const EdgeInsets.symmetric(horizontal: 2),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.lime : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Badge(
+              isLabelVisible: badge > 0,
+              label: Text('$badge'),
+              child: Icon(icon, size: 22, color: selected ? AppColors.night : AppColors.onNightDim),
             ),
-            label: 'Home',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.insights_outlined),
-            selectedIcon: Icon(Icons.insights),
-            label: 'History',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.center_focus_weak),
-            selectedIcon: Icon(Icons.center_focus_strong),
-            label: 'Harvest',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
+            if (selected)
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(label,
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                      style: const TextStyle(
+                          color: AppColors.night, fontWeight: FontWeight.w700, fontSize: 14)),
+                ),
+              ),
+          ]),
         ),
       ),
     );

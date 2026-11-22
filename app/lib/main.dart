@@ -6,6 +6,7 @@ import 'data/auth_service.dart';
 import 'data/demo_farm_repository.dart';
 import 'data/firebase_farm_repository.dart';
 import 'firebase_options.dart';
+import 'services/notification_service.dart';
 import 'ui/home_shell.dart';
 import 'ui/login_screen.dart';
 import 'ui/theme.dart';
@@ -19,6 +20,7 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('Firebase not available, demo mode only: $e');
   }
+  await NotificationService.instance.init();
   runApp(MushroomApp(firebaseReady: firebaseReady));
 }
 
@@ -70,7 +72,7 @@ class _AppRootState extends State<AppRoot> {
       stream: _userStream,
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
-          return const AiScaffold(body: Center(child: CircularProgressIndicator()));
+          return const AppScaffold(body: Center(child: CircularProgressIndicator()));
         }
         final user = snap.data;
         if (user == null) return login;

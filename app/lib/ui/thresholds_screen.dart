@@ -70,7 +70,7 @@ class _ThresholdsScreenState extends State<ThresholdsScreen> {
         if (didPop) return;
         if (await _confirmDiscard() && context.mounted) Navigator.of(context).pop();
       },
-      child: AiScaffold(
+      child: AppScaffold(
         appBar: AppBar(title: const Text('Targets & thresholds')),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -133,7 +133,7 @@ class _ThresholdsScreenState extends State<ThresholdsScreen> {
         bottomNavigationBar: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: GradientButton(
+            child: PrimaryButton(
               label: _dirty ? 'Save changes' : 'No changes',
               icon: _dirty ? Icons.check : null,
               busy: _saving,

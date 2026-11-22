@@ -19,7 +19,7 @@ class HarvestScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = context.watch<FarmState>();
     final past = s.batches.where((b) => !b.isOpen).toList();
-    return AiScaffold(
+    return AppScaffold(
       appBar: AppBar(title: const PageTitle('Harvest'), actions: const [ConnectionChip()]),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -65,9 +65,7 @@ class _CameraCard extends StatelessWidget {
     final result = s.harvest;
     final t = Theme.of(context).textTheme;
 
-    return GlassCard(
-      gradientBorder: true,
-      glow: AppColors.cyan,
+    return Panel(
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -75,31 +73,25 @@ class _CameraCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             child: Row(children: [
-              const Icon(Icons.center_focus_strong, color: AppColors.cyan, size: 20),
+              const Icon(Icons.photo_camera_outlined, color: AppColors.inkDim, size: 20),
               const SizedBox(width: 8),
-              const GradientText('AI Harvest Vision',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              const Text('Grow room camera',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.ink)),
               const Spacer(),
               if (shot != null)
                 Text(timeAgo(shot.ts, s.now),
-                    style: const TextStyle(fontSize: 12, color: AppColors.textDim)),
+                    style: const TextStyle(fontSize: 12, color: AppColors.inkDim)),
             ]),
           ),
           AspectRatio(
             aspectRatio: 4 / 3,
             child: shot == null
                 ? Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [AppColors.cyan.withValues(alpha: 0.08), AppColors.violet.withValues(alpha: 0.10)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
+                    color: AppColors.surfaceAlt,
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.photo_camera_outlined, size: 48, color: AppColors.cyan.withValues(alpha: 0.7)),
+                        const Icon(Icons.photo_camera_outlined, size: 44, color: AppColors.inkDim),
                         const SizedBox(height: 8),
                         const Text('No photo yet'),
                         Padding(
@@ -128,7 +120,7 @@ class _CameraCard extends StatelessWidget {
                       style: t.bodySmall),
                 const SizedBox(height: 6),
                 if (result == null)
-                  Text('AI harvest check: waiting for the first result.', style: t.bodyMedium)
+                  Text('Harvest check: waiting for the first photo result.', style: t.bodyMedium)
                 else
                   _ResultRow(result),
               ],
@@ -214,12 +206,12 @@ class _BatchCard extends StatelessWidget {
                 style: t.bodyMedium,
               ),
               const SizedBox(height: 12),
-              GradientButton(
+              PrimaryButton(
                 onPressed: () async {
                   final err = await s.startBatch();
                   if (context.mounted) showMessage(context, err ?? 'Pinning day saved.');
                 },
-                icon: Icons.spa,
+                icon: Icons.event_available_outlined,
                 label: 'Pinning started today',
               ),
             ],
@@ -253,8 +245,7 @@ class _BatchCard extends StatelessWidget {
               spacing: 8,
               crossAxisAlignment: WrapCrossAlignment.end,
               children: [
-                GradientText('Day $day',
-                    style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
+                Text('Day $day', style: numberStyle(36, weight: FontWeight.w700)),
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text('since pinning', style: t.bodyMedium),
@@ -335,7 +326,7 @@ class _GlowBar extends StatelessWidget {
         Container(
           height: 10,
           decoration: BoxDecoration(
-            color: AppColors.glassStrong,
+            color: AppColors.track,
             borderRadius: BorderRadius.circular(6),
           ),
         ),
@@ -343,9 +334,8 @@ class _GlowBar extends StatelessWidget {
           height: 10,
           width: c.maxWidth * value,
           decoration: BoxDecoration(
-            gradient: LinearGradient(colors: [AppColors.cyan, color]),
+            color: color,
             borderRadius: BorderRadius.circular(6),
-            boxShadow: [BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 10)],
           ),
         ),
       ]);

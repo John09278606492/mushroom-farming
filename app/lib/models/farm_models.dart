@@ -31,11 +31,11 @@ extension DeviceIdInfo on DeviceId {
       };
 
   IconData get icon => switch (this) {
-        DeviceId.mist => Icons.water_drop_outlined,
-        DeviceId.fan => Icons.air,
-        DeviceId.refill => Icons.water,
-        DeviceId.sprinkler => Icons.shower_outlined,
-        DeviceId.light => Icons.lightbulb_outline,
+        DeviceId.mist => Icons.cloud_rounded,
+        DeviceId.fan => Icons.wind_power_rounded,
+        DeviceId.refill => Icons.water_rounded,
+        DeviceId.sprinkler => Icons.shower_rounded,
+        DeviceId.light => Icons.lightbulb_rounded,
       };
 
   /// In auto mode the controller decides these itself from the thresholds,

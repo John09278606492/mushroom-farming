@@ -142,7 +142,8 @@ class DemoFarmRepository implements FarmRepository {
         HistoryPoint(ts: now, temp: _temp, rh: _rh, co2: _co2.round()),
       ];
     }
-    _publishLive();
+    // With its WiFi cut the controller keeps running but nothing reaches the app.
+    if (!_wifiCut) _publishLive();
   }
 
   void _runAutoLogic() {
@@ -340,10 +341,20 @@ class DemoFarmRepository implements FarmRepository {
   }
 
   /// Demo helper: drain the reservoir to show the low-water alerts.
+  bool _wifiCut = false;
+  bool get wifiCut => _wifiCut;
+
+  /// Pretends the controller lost its WiFi: updates stop, so after 30 s the
+  /// app reports it offline. Turning it back on resumes updates at once.
+  void setWifiCut(bool cut) {
+    _wifiCut = cut;
+    if (!cut) _publishLive();
+  }
+
   void drainWater() {
     _water = 0.05;
     _enforceSafety();
-    _publishLive();
+    if (!_wifiCut) _publishLive();
   }
 
   @override

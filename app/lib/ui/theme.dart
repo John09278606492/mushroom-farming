@@ -3,249 +3,274 @@ import 'package:material_ui/material_ui.dart';
 
 import '../logic/alerts.dart';
 
-/// "AI dashboard" look: deep navy background, glass cards, cyan→violet glow.
+/// Smart-farm look: soft sage background, white rounded cards, a near-black
+/// hero card and bottom bar, and lime as the one bright accent. Each kind of
+/// reading keeps its own calm tone.
 abstract final class AppColors {
-  static const bg0 = Color(0xFF060914);
-  static const bg1 = Color(0xFF0C1226);
-  static const bg2 = Color(0xFF141C38);
-  static const glass = Color(0x0FFFFFFF); // 6% white
-  static const glassStrong = Color(0x1AFFFFFF); // 10% white
-  static const glassBorder = Color(0x1FFFFFFF); // 12% white
-  static const text = Color(0xFFE8ECFF);
-  static const textDim = Color(0xFF8E97B8);
+  static const bg = Color(0xFFEEF0EA); // soft sage grey
+  static const surface = Color(0xFFFFFFFF); // card
+  static const surfaceAlt = Color(0xFFF3F4EF); // inset / pressed
+  static const line = Color(0xFFE3E6DD); // hairline
+  static const track = Color(0xFFE6E9E1); // empty bar / switch track
+  static const ink = Color(0xFF121512);
+  static const inkDim = Color(0xFF7A8075);
 
-  static const cyan = Color(0xFF22D3EE);
-  static const violet = Color(0xFF8B5CF6);
-  static const pink = Color(0xFFEC4899);
-  static const green = Color(0xFF34D399);
-  static const amber = Color(0xFFFBBF24);
-  static const red = Color(0xFFF87171);
-  static const blue = Color(0xFF60A5FA);
+  static const night = Color(0xFF151916); // hero card, bottom bar
+  static const nightSoft = Color(0xFF242A25);
+  static const onNightDim = Color(0xFFA3AA9F);
 
-  static const aiGradient = LinearGradient(
-    colors: [cyan, violet],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
+  static const lime = Color(0xFFC8F04B); // accent
+  static const primary = Color(0xFF151916); // buttons are near-black
+  static const primarySoft = Color(0xFFEAF7C6);
 
-  static const aiGradientWide = LinearGradient(
-    colors: [cyan, violet, pink],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
+  // states
+  static const ok = Color(0xFF4F9A2E);
+  static const ochre = Color(0xFFD08A1E);
+  static const brick = Color(0xFFD1493A);
+
+  // reading / device tones
+  static const slate = Color(0xFF3B7DD8); // humidity, water
+  static const clay = Color(0xFFE0773A); // temperature
+  static const plum = Color(0xFF8C62C9); // CO2, exhaust fan
+  static const mustard = Color(0xFFD9A400); // grow light
+  static const teal = Color(0xFF2BA39B); // mist
+
+  // Analytics zones (checked for colour-blind contrast as a set):
+  // below target = slate, on target = leaf, above target = mustard.
+  static const leaf = Color(0xFF2E7D4F);
 }
+
+const _tabular = [FontFeature.tabularFigures()];
+
+/// Text style for big numbers (digits line up and do not jump around).
+TextStyle numberStyle(double size, {Color color = AppColors.ink, FontWeight weight = FontWeight.w600}) =>
+    TextStyle(
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+      height: 1.0,
+      letterSpacing: -0.5,
+      fontFeatures: _tabular,
+    );
 
 ThemeData buildTheme() {
   final scheme = ColorScheme.fromSeed(
-    seedColor: AppColors.violet,
-    brightness: Brightness.dark,
+    seedColor: AppColors.primary,
+    brightness: Brightness.light,
   ).copyWith(
-    primary: AppColors.cyan,
-    onPrimary: AppColors.bg0,
-    secondary: AppColors.violet,
+    primary: AppColors.primary,
+    onPrimary: Colors.white,
+    primaryContainer: AppColors.primarySoft,
+    onPrimaryContainer: AppColors.primary,
+    secondary: AppColors.clay,
     onSecondary: Colors.white,
-    tertiary: AppColors.pink,
-    surface: AppColors.bg1,
-    onSurface: AppColors.text,
-    onSurfaceVariant: AppColors.textDim,
-    surfaceContainerHighest: AppColors.bg2,
-    outline: const Color(0xFF3A4366),
-    outlineVariant: AppColors.glassBorder,
-    error: AppColors.red,
-    primaryContainer: const Color(0xFF123A4A),
-    onPrimaryContainer: AppColors.cyan,
-    tertiaryContainer: const Color(0xFF3B1F5C),
-    onTertiaryContainer: const Color(0xFFD8C4FF),
-    secondaryContainer: const Color(0xFF221A45),
-    onSecondaryContainer: const Color(0xFFD8C4FF),
+    secondaryContainer: const Color(0xFFF1DFD3),
+    onSecondaryContainer: const Color(0xFF6B2E14),
+    tertiary: AppColors.slate,
+    tertiaryContainer: const Color(0xFFD9E5EF),
+    onTertiaryContainer: const Color(0xFF173A55),
+    surface: AppColors.surface,
+    onSurface: AppColors.ink,
+    onSurfaceVariant: AppColors.inkDim,
+    surfaceContainerLowest: AppColors.surface,
+    surfaceContainerLow: AppColors.surface,
+    surfaceContainer: AppColors.bg,
+    surfaceContainerHigh: AppColors.surfaceAlt,
+    surfaceContainerHighest: AppColors.surfaceAlt,
+    outline: const Color(0xFFB9B4A6),
+    outlineVariant: AppColors.line,
+    error: AppColors.brick,
   );
 
   final rounded = RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
+  const base = TextStyle(color: AppColors.ink);
 
   return ThemeData(
     colorScheme: scheme,
-    brightness: Brightness.dark,
+    brightness: Brightness.light,
     useMaterial3: true,
-    scaffoldBackgroundColor: AppColors.bg0,
-    canvasColor: AppColors.bg1,
-    dividerColor: AppColors.glassBorder,
-    dividerTheme: const DividerThemeData(color: AppColors.glassBorder, space: 1),
+    scaffoldBackgroundColor: AppColors.bg,
+    canvasColor: AppColors.surface,
+    dividerColor: AppColors.line,
+    dividerTheme: const DividerThemeData(color: AppColors.line, space: 1),
+    splashFactory: InkRipple.splashFactory,
+    textTheme: TextTheme(
+      headlineSmall: base.copyWith(fontSize: 24, fontWeight: FontWeight.w700, letterSpacing: -0.4),
+      titleLarge: base.copyWith(fontSize: 20, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+      titleMedium: base.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
+      bodyLarge: base.copyWith(fontSize: 15, height: 1.4),
+      bodyMedium: base.copyWith(fontSize: 14, height: 1.4),
+      bodySmall: const TextStyle(fontSize: 12.5, color: AppColors.inkDim, height: 1.35),
+      labelLarge: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    ),
     appBarTheme: const AppBarTheme(
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.bg,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
-      foregroundColor: AppColors.text,
+      foregroundColor: AppColors.ink,
       titleTextStyle: TextStyle(
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: FontWeight.w700,
-        letterSpacing: -0.3,
-        color: AppColors.text,
+        letterSpacing: -0.5,
+        color: AppColors.ink,
       ),
     ),
     cardTheme: CardThemeData(
-      color: AppColors.glass,
+      color: AppColors.surface,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: const BorderSide(color: AppColors.glassBorder),
+        borderRadius: BorderRadius.circular(22),
+        side: const BorderSide(color: AppColors.line),
       ),
     ),
     listTileTheme: const ListTileThemeData(
       contentPadding: EdgeInsets.symmetric(horizontal: 16),
-      iconColor: AppColors.cyan,
-      textColor: AppColors.text,
+      iconColor: AppColors.inkDim,
+      textColor: AppColors.ink,
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: const Color(0xE60A0F22),
+      backgroundColor: AppColors.surface,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      height: 68,
-      indicatorColor: AppColors.cyan.withValues(alpha: 0.16),
+      height: 64,
+      indicatorColor: AppColors.primarySoft,
       iconTheme: WidgetStateProperty.resolveWith((s) => IconThemeData(
-            color: s.contains(WidgetState.selected) ? AppColors.cyan : AppColors.textDim,
+            color: s.contains(WidgetState.selected) ? AppColors.primary : AppColors.inkDim,
           )),
       labelTextStyle: WidgetStateProperty.resolveWith((s) => TextStyle(
             fontSize: 12,
-            fontWeight: s.contains(WidgetState.selected) ? FontWeight.w600 : FontWeight.w500,
-            color: s.contains(WidgetState.selected) ? AppColors.cyan : AppColors.textDim,
+            fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500,
+            color: s.contains(WidgetState.selected) ? AppColors.ink : AppColors.inkDim,
           )),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: AppColors.cyan,
-        foregroundColor: AppColors.bg0,
-        disabledBackgroundColor: AppColors.glassStrong,
-        disabledForegroundColor: AppColors.textDim,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        disabledBackgroundColor: AppColors.track,
+        disabledForegroundColor: AppColors.inkDim,
         shape: rounded,
-        textStyle: const TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.2),
+        textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: AppColors.text,
-        side: const BorderSide(color: AppColors.glassBorder),
-        backgroundColor: AppColors.glass,
+        foregroundColor: AppColors.ink,
+        side: const BorderSide(color: Color(0xFFD5D9CF)),
+        backgroundColor: AppColors.surface,
         shape: rounded,
+        textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: AppColors.cyan),
+      style: TextButton.styleFrom(foregroundColor: AppColors.primary),
     ),
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
-        backgroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected)
-            ? AppColors.cyan.withValues(alpha: 0.18)
-            : AppColors.glass),
+        backgroundColor: WidgetStateProperty.resolveWith((s) =>
+            s.contains(WidgetState.selected) ? AppColors.ink : AppColors.surface),
         foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.disabled)
-            ? AppColors.textDim
+            ? AppColors.inkDim
             : s.contains(WidgetState.selected)
-                ? AppColors.cyan
-                : AppColors.text),
-        side: WidgetStateProperty.resolveWith((s) => BorderSide(
-              color: s.contains(WidgetState.selected)
-                  ? AppColors.cyan.withValues(alpha: 0.6)
-                  : AppColors.glassBorder,
-            )),
-        shape: WidgetStatePropertyAll(rounded),
+                ? Colors.white
+                : AppColors.ink),
+        side: const WidgetStatePropertyAll(BorderSide(color: AppColors.line)),
+        shape: const WidgetStatePropertyAll(StadiumBorder()),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 12)),
+        textStyle: const WidgetStatePropertyAll(TextStyle(fontWeight: FontWeight.w600)),
       ),
     ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected)
-          ? Colors.white.withValues(alpha: s.contains(WidgetState.disabled) ? 0.7 : 1)
-          : AppColors.textDim),
+          ? AppColors.night
+          : const Color(0xFF9CA396)),
       trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected)
-          ? AppColors.cyan.withValues(alpha: s.contains(WidgetState.disabled) ? 0.35 : 0.9)
-          : AppColors.glassStrong),
-      trackOutlineColor: const WidgetStatePropertyAll(AppColors.glassBorder),
+          ? AppColors.lime.withValues(alpha: s.contains(WidgetState.disabled) ? 0.45 : 1)
+          : AppColors.track),
+      trackOutlineColor: WidgetStateProperty.resolveWith((s) =>
+          s.contains(WidgetState.selected) ? Colors.transparent : const Color(0xFFD5D9CF)),
     ),
     sliderTheme: SliderThemeData(
-      activeTrackColor: AppColors.cyan,
-      inactiveTrackColor: AppColors.glassStrong,
-      thumbColor: Colors.white,
-      overlayColor: AppColors.cyan.withValues(alpha: 0.15),
-      valueIndicatorColor: AppColors.violet,
+      activeTrackColor: AppColors.night,
+      inactiveTrackColor: AppColors.track,
+      thumbColor: AppColors.night,
+      overlayColor: AppColors.primary.withValues(alpha: 0.12),
+      valueIndicatorColor: AppColors.ink,
       valueIndicatorTextStyle: const TextStyle(color: Colors.white),
     ),
     progressIndicatorTheme: const ProgressIndicatorThemeData(
-      color: AppColors.cyan,
-      linearTrackColor: AppColors.glassStrong,
+      color: AppColors.primary,
+      linearTrackColor: AppColors.track,
     ),
     chipTheme: ChipThemeData(
-      backgroundColor: AppColors.glass,
-      selectedColor: AppColors.cyan.withValues(alpha: 0.2),
-      side: const BorderSide(color: AppColors.glassBorder),
-      labelStyle: const TextStyle(color: AppColors.text),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      backgroundColor: AppColors.surface,
+      selectedColor: AppColors.primarySoft,
+      side: const BorderSide(color: AppColors.line),
+      labelStyle: const TextStyle(color: AppColors.ink),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: AppColors.bg2,
+      backgroundColor: AppColors.surface,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-        side: const BorderSide(color: AppColors.glassBorder),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),
     bottomSheetTheme: const BottomSheetThemeData(
-      backgroundColor: AppColors.bg1,
+      backgroundColor: AppColors.surface,
       surfaceTintColor: Colors.transparent,
-      dragHandleColor: AppColors.textDim,
+      dragHandleColor: Color(0xFFD5D9CF),
     ),
     snackBarTheme: SnackBarThemeData(
-      backgroundColor: AppColors.bg2,
-      contentTextStyle: const TextStyle(color: AppColors.text),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: AppColors.glassBorder),
-      ),
+      backgroundColor: AppColors.ink,
+      contentTextStyle: const TextStyle(color: Colors.white),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: AppColors.glass,
-      prefixIconColor: AppColors.textDim,
+      fillColor: AppColors.surface,
+      prefixIconColor: AppColors.inkDim,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppColors.glassBorder),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFD5D9CF)),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppColors.glassBorder),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFD5D9CF)),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppColors.cyan, width: 1.5),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
       ),
     ),
-    badgeTheme: const BadgeThemeData(backgroundColor: AppColors.pink),
+    badgeTheme: const BadgeThemeData(backgroundColor: AppColors.brick),
   );
 }
 
-/// Neon status colors.
+/// Status colours.
 extension SeverityColors on Severity {
   Color color(BuildContext context) => switch (this) {
-        Severity.ok => AppColors.green,
-        Severity.info => AppColors.cyan,
-        Severity.warning => AppColors.amber,
-        Severity.critical => AppColors.red,
+        Severity.ok => AppColors.ok,
+        Severity.info => AppColors.slate,
+        Severity.warning => AppColors.ochre,
+        Severity.critical => AppColors.brick,
       };
 
-  Color background(BuildContext context) => color(context).withValues(alpha: 0.12);
+  Color background(BuildContext context) => color(context).withValues(alpha: 0.10);
 
   IconData get icon => switch (this) {
-        Severity.ok => Icons.check_circle,
-        Severity.info => Icons.info,
+        Severity.ok => Icons.check_circle_outline,
+        Severity.info => Icons.info_outline,
         Severity.warning => Icons.warning_amber_rounded,
-        Severity.critical => Icons.error,
+        Severity.critical => Icons.error_outline,
       };
 }
 
-/// A screen with the glowing gradient background. Use instead of [Scaffold].
-class AiScaffold extends StatelessWidget {
-  const AiScaffold({
+/// Page scaffold on the paper background.
+class AppScaffold extends StatelessWidget {
+  const AppScaffold({
     super.key,
     this.appBar,
     required this.body,
@@ -258,129 +283,55 @@ class AiScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.bg1, AppColors.bg0],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
-      child: Stack(
-        children: [
-          const _Glow(top: -140, right: -100, color: AppColors.violet, size: 360, alpha: 0.30),
-          const _Glow(top: 260, left: -160, color: AppColors.cyan, size: 340, alpha: 0.14),
-          Scaffold(
-            backgroundColor: Colors.transparent,
-            appBar: appBar,
-            body: body,
-            bottomNavigationBar: bottomNavigationBar,
-          ),
-        ],
-      ),
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: appBar,
+      body: body,
+      bottomNavigationBar: bottomNavigationBar,
     );
   }
 }
 
-class _Glow extends StatelessWidget {
-  const _Glow({this.top, this.left, this.right, required this.color, required this.size, required this.alpha});
-  final double? top;
-  final double? left;
-  final double? right;
-  final Color color;
-  final double size;
-  final double alpha;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: top,
-      left: left,
-      right: right,
-      child: IgnorePointer(
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(
-              colors: [color.withValues(alpha: alpha), color.withValues(alpha: 0)],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Glass panel. [gradientBorder] gives the cyan→violet "AI" outline,
-/// [glow] adds a soft colored shadow.
-class GlassCard extends StatelessWidget {
-  const GlassCard({
+/// Flat card with a hairline border.
+class Panel extends StatelessWidget {
+  const Panel({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(16),
-    this.gradientBorder = false,
-    this.glow,
     this.onTap,
-    this.radius = 20,
+    this.radius = 22,
     this.fill,
+    this.borderColor,
   });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
-  final bool gradientBorder;
-  final Color? glow;
   final VoidCallback? onTap;
   final double radius;
   final Color? fill;
+  final Color? borderColor;
 
   @override
   Widget build(BuildContext context) {
-    final inner = Material(
-      color: fill ?? (gradientBorder ? AppColors.bg1 : AppColors.glass),
-      borderRadius: BorderRadius.circular(gradientBorder ? radius - 1.2 : radius),
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(radius),
+      side: BorderSide(color: borderColor ?? AppColors.line),
+    );
+    return Material(
+      color: fill ?? AppColors.surface,
+      shape: shape,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Padding(padding: padding, child: child),
       ),
     );
-    return Container(
-      padding: gradientBorder ? const EdgeInsets.all(1.2) : EdgeInsets.zero,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(radius),
-        gradient: gradientBorder ? AppColors.aiGradientWide : null,
-        border: gradientBorder ? null : Border.all(color: AppColors.glassBorder),
-        boxShadow: glow == null
-            ? null
-            : [BoxShadow(color: glow!.withValues(alpha: 0.28), blurRadius: 28, spreadRadius: -6)],
-      ),
-      child: inner,
-    );
   }
 }
 
-/// Text painted with the cyan→violet gradient.
-class GradientText extends StatelessWidget {
-  const GradientText(this.text, {super.key, this.style, this.gradient = AppColors.aiGradient});
-  final String text;
-  final TextStyle? style;
-  final Gradient gradient;
-
-  @override
-  Widget build(BuildContext context) {
-    return ShaderMask(
-      blendMode: BlendMode.srcIn,
-      shaderCallback: (bounds) => gradient.createShader(Offset.zero & bounds.size),
-      child: Text(text, style: style),
-    );
-  }
-}
-
-/// Big gradient call-to-action button.
-class GradientButton extends StatelessWidget {
-  const GradientButton({super.key, required this.label, required this.onPressed, this.icon, this.busy = false});
+/// Full-width main action button.
+class PrimaryButton extends StatelessWidget {
+  const PrimaryButton({super.key, required this.label, required this.onPressed, this.icon, this.busy = false});
   final String label;
   final VoidCallback? onPressed;
   final IconData? icon;
@@ -388,105 +339,36 @@ class GradientButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = onPressed != null && !busy;
-    return Opacity(
-      opacity: enabled || busy ? 1 : 0.45,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: AppColors.aiGradient,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(color: AppColors.violet.withValues(alpha: 0.35), blurRadius: 24, offset: const Offset(0, 8)),
-          ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: enabled ? onPressed : null,
-            child: SizedBox(
-              height: 54,
-              child: Center(
-                child: busy
-                    ? const SizedBox.square(
-                        dimension: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : Row(mainAxisSize: MainAxisSize.min, children: [
-                        if (icon != null) ...[Icon(icon, color: Colors.white, size: 20), const SizedBox(width: 8)],
-                        Text(label,
-                            style: const TextStyle(
-                                color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16, letterSpacing: 0.2)),
-                      ]),
-              ),
-            ),
-          ),
-        ),
+    return FilledButton(
+      onPressed: busy ? () {} : onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size.fromHeight(56),
+        shape: const StadiumBorder(),
       ),
+      child: busy
+          ? const SizedBox.square(
+              dimension: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+          : Row(mainAxisSize: MainAxisSize.min, children: [
+              if (icon != null) ...[Icon(icon, size: 19), const SizedBox(width: 8)],
+              Text(label),
+            ]),
     );
   }
 }
 
-/// A dot that softly pulses (live indicator).
-class PulseDot extends StatefulWidget {
-  const PulseDot({super.key, required this.color, this.size = 8, this.animate = true});
+/// Small solid status dot.
+class StatusDot extends StatelessWidget {
+  const StatusDot({super.key, required this.color, this.size = 8});
   final Color color;
   final double size;
-  final bool animate;
-
-  @override
-  State<PulseDot> createState() => _PulseDotState();
-}
-
-class _PulseDotState extends State<PulseDot> with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1400));
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.animate) _c.repeat();
-  }
-
-  @override
-  void didUpdateWidget(PulseDot old) {
-    super.didUpdateWidget(old);
-    if (widget.animate && !_c.isAnimating) _c.repeat();
-    if (!widget.animate && _c.isAnimating) _c.stop();
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.size;
-    return SizedBox.square(
-      dimension: s * 2.4,
-      child: AnimatedBuilder(
-        animation: _c,
-        builder: (context, _) => Stack(alignment: Alignment.center, children: [
-          if (widget.animate)
-            Container(
-              width: s + s * 1.4 * _c.value,
-              height: s + s * 1.4 * _c.value,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: widget.color.withValues(alpha: 0.45 * (1 - _c.value)),
-              ),
-            ),
-          Container(
-            width: s,
-            height: s,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: widget.color,
-              boxShadow: [BoxShadow(color: widget.color.withValues(alpha: 0.7), blurRadius: 6)],
-            ),
-          ),
-        ]),
-      ),
+    return Container(
+      width: size,
+      height: size,
+      margin: EdgeInsets.symmetric(horizontal: size * 0.6),
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
     );
   }
 }
@@ -507,7 +389,7 @@ String formatDateTime(DateTime t) => DateFormat('MMM d, h:mm a').format(t);
 
 String formatDate(DateTime t) => DateFormat('MMM d, yyyy').format(t);
 
-/// Section header used on list pages.
+/// Section heading used on list pages.
 class SectionTitle extends StatelessWidget {
   const SectionTitle(this.text, {super.key, this.trailing});
   final String text;
@@ -516,29 +398,17 @@ class SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 22, 4, 10),
+      padding: const EdgeInsets.fromLTRB(2, 26, 2, 10),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Container(
-            width: 3,
-            height: 14,
-            margin: const EdgeInsets.only(right: 8),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [AppColors.cyan, AppColors.violet],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
           Expanded(
             child: Text(text,
                 style: const TextStyle(
-                  fontSize: 13,
-                  letterSpacing: 0.6,
+                  fontSize: 16,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.textDim,
+                  color: AppColors.ink,
+                  letterSpacing: -0.1,
                 )),
           ),
           ?trailing,

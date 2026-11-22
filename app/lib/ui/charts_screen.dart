@@ -43,7 +43,7 @@ class _ChartsScreenState extends State<ChartsScreen> {
   @override
   Widget build(BuildContext context) {
     final sp = context.watch<FarmState>().setpoints;
-    return AiScaffold(
+    return AppScaffold(
       appBar: AppBar(title: const PageTitle('History'), actions: const [ConnectionChip()]),
       body: StreamBuilder<List<HistoryPoint>>(
         stream: _stream,
@@ -75,7 +75,7 @@ class _ChartsScreenState extends State<ChartsScreen> {
                   title: 'Humidity',
                   unit: '%',
                   decimals: 0,
-                  color: AppColors.cyan,
+                  color: AppColors.slate,
                   points: points,
                   value: (p) => p.rh,
                   range: _range,
@@ -86,7 +86,7 @@ class _ChartsScreenState extends State<ChartsScreen> {
                   title: 'Temperature',
                   unit: '°C',
                   decimals: 1,
-                  color: AppColors.amber,
+                  color: AppColors.clay,
                   points: points,
                   value: (p) => p.temp,
                   range: _range,
@@ -97,7 +97,7 @@ class _ChartsScreenState extends State<ChartsScreen> {
                   title: 'CO2',
                   unit: 'ppm',
                   decimals: 0,
-                  color: AppColors.violet,
+                  color: AppColors.plum,
                   points: points,
                   value: (p) => p.co2?.toDouble(),
                   range: _range,
@@ -199,7 +199,7 @@ class _ChartCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(left: 4),
               child: Row(children: [
-                Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: color, blurRadius: 8)])),
+                Container(width: 10, height: 10, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
                 const SizedBox(width: 8),
                 Expanded(child: Text(title, style: t.titleMedium)),
                 Text('${fmt(spots.last.y)} $unit',
@@ -285,15 +285,7 @@ class _ChartCard extends StatelessWidget {
                       color: color,
                       barWidth: 2,
                       dotData: const FlDotData(show: false),
-                      shadow: Shadow(color: color.withValues(alpha: 0.6), blurRadius: 8),
-                      belowBarData: BarAreaData(
-                        show: true,
-                        gradient: LinearGradient(
-                          colors: [color.withValues(alpha: 0.30), color.withValues(alpha: 0.0)],
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                        ),
-                      ),
+                      belowBarData: BarAreaData(show: true, color: color.withValues(alpha: 0.08)),
                     ),
                   ],
                 ),

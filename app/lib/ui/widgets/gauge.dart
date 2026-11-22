@@ -1,134 +1,88 @@
-import 'dart:math';
-
 import 'package:material_ui/material_ui.dart';
 
 import '../theme.dart';
 
-/// A 270° ring gauge with a glowing gradient arc.
-class RingGauge extends StatelessWidget {
-  const RingGauge({
+/// A thin horizontal scale: the target band is shaded and a dot marks the
+/// current reading. Reads like a field instrument rather than a dial.
+class RangeBar extends StatelessWidget {
+  const RangeBar({
     super.key,
     required this.fraction,
-    required this.colors,
-    required this.child,
-    this.size = 112,
-    this.stroke = 10,
+    required this.color,
     this.targetFrom,
     this.targetTo,
   });
 
-  /// 0..1, or null when there is no reading (empty ring).
+  /// 0..1, or null when there is no reading.
   final double? fraction;
-  final List<Color> colors;
-  final Widget child;
-  final double size;
-  final double stroke;
-
-  /// Optional target band (0..1) drawn as a faint arc on the track.
+  final Color color;
   final double? targetFrom;
   final double? targetTo;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox.square(
-      dimension: size,
+    return SizedBox(
+      height: 16,
+      width: double.infinity,
       child: TweenAnimationBuilder<double>(
         tween: Tween(end: (fraction ?? 0).clamp(0.0, 1.0)),
-        duration: const Duration(milliseconds: 700),
+        duration: const Duration(milliseconds: 500),
         curve: Curves.easeOutCubic,
         builder: (context, v, _) => CustomPaint(
-          painter: _RingPainter(
+          painter: _RangePainter(
             value: fraction == null ? null : v,
-            colors: colors,
-            stroke: stroke,
-            targetFrom: targetFrom,
-            targetTo: targetTo,
+            color: color,
+            from: targetFrom,
+            to: targetTo,
           ),
-          child: Center(child: child),
         ),
       ),
     );
   }
 }
 
-class _RingPainter extends CustomPainter {
-  _RingPainter({
-    required this.value,
-    required this.colors,
-    required this.stroke,
-    this.targetFrom,
-    this.targetTo,
-  });
+class _RangePainter extends CustomPainter {
+  _RangePainter({required this.value, required this.color, this.from, this.to});
 
   final double? value;
-  final List<Color> colors;
-  final double stroke;
-  final double? targetFrom;
-  final double? targetTo;
-
-  static const _start = 135 * pi / 180;
-  static const _sweep = 270 * pi / 180;
+  final Color color;
+  final double? from;
+  final double? to;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final arcRect = rect.deflate(stroke / 2 + 4);
+    const h = 6.0;
+    const r = 7.0; // marker radius
+    final y = size.height / 2;
+    const left = r;
+    final width = size.width - r * 2;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Rect.fromLTWH(left, y - h / 2, width, h), const Radius.circular(h / 2)),
+      Paint()..color = AppColors.track,
+    );
 
-    final track = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..color = AppColors.glassStrong;
-    canvas.drawArc(arcRect, _start, _sweep, false, track);
-
-    if (targetFrom != null && targetTo != null) {
-      final band = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.butt
-        ..color = Colors.white.withValues(alpha: 0.10);
-      final a = targetFrom!.clamp(0.0, 1.0);
-      final b = targetTo!.clamp(0.0, 1.0);
-      if (b > a) canvas.drawArc(arcRect, _start + _sweep * a, _sweep * (b - a), false, band);
+    if (from != null && to != null) {
+      final a = from!.clamp(0.0, 1.0);
+      final b = to!.clamp(0.0, 1.0);
+      if (b > a) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(left + width * a, y - h / 2, width * (b - a), h),
+            const Radius.circular(h / 2),
+          ),
+          Paint()..color = color.withValues(alpha: 0.30),
+        );
+      }
     }
 
     final v = value;
-    if (v == null || v <= 0) return;
-
-    final shader = SweepGradient(
-      startAngle: 0,
-      endAngle: _sweep,
-      colors: colors,
-      transform: const GradientRotation(_start),
-    ).createShader(arcRect);
-
-    final glow = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke + 6
-      ..strokeCap = StrokeCap.round
-      ..shader = shader
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
-    canvas.drawArc(arcRect, _start, _sweep * v, false, glow);
-
-    final arc = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..shader = shader;
-    canvas.drawArc(arcRect, _start, _sweep * v, false, arc);
-
-    // Bright tip.
-    final angle = _start + _sweep * v;
-    final c = arcRect.center;
-    final r = arcRect.width / 2;
-    final tip = Offset(c.dx + r * cos(angle), c.dy + r * sin(angle));
-    canvas.drawCircle(tip, stroke / 2.6, Paint()..color = Colors.white);
+    if (v == null) return;
+    final c = Offset(left + width * v, y);
+    canvas.drawCircle(c, r, Paint()..color = AppColors.surface);
+    canvas.drawCircle(c, r - 2, Paint()..color = color);
   }
 
   @override
-  bool shouldRepaint(_RingPainter old) =>
-      old.value != value ||
-      old.colors != colors ||
-      old.targetFrom != targetFrom ||
-      old.targetTo != targetTo;
+  bool shouldRepaint(_RangePainter old) =>
+      old.value != value || old.color != color || old.from != from || old.to != to;
 }

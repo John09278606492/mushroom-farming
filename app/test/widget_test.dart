@@ -11,7 +11,7 @@ void main() {
     addTearDown(tester.view.reset);
 
     await tester.pumpWidget(const MushroomApp(firebaseReady: false));
-    expect(find.text('Smart Mushroom Farm'), findsOneWidget);
+    expect(find.text('Mushroom Farm'), findsOneWidget);
     expect(find.text('Sign in'), findsNothing);
 
     await tester.tap(find.text('Try demo mode'));
@@ -19,15 +19,24 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('Humidity'), findsOneWidget);
-    expect(find.text('Control mode'), findsOneWidget);
-    expect(find.text('DEMO'), findsWidgets);
+    expect(find.text('Mode'), findsOneWidget);
+    expect(find.text('Demo'), findsWidgets);
 
     // Navigate through every tab.
-    for (final tab in ['History', 'Harvest', 'Settings', 'Home']) {
-      await tester.tap(find.text(tab).last);
+    for (final tab in ['History', 'Analytics', 'Harvest', 'Settings', 'Home']) {
+      await tester.tap(find.bySemanticsLabel(tab).last);
       await tester.pump(const Duration(milliseconds: 300));
     }
     expect(find.text('Devices'), findsOneWidget);
+
+    // The bell opens the notification list.
+    await tester.tap(find.bySemanticsLabel(RegExp('Notifications')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Happening now'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     // Switch to manual through the confirmation dialog.
     await tester.tap(find.text('Manual'));
@@ -41,7 +50,7 @@ void main() {
     expect(find.textContaining('You control every device yourself'), findsOneWidget);
 
     // Pushed screens must still reach FarmState.
-    await tester.tap(find.text('Settings').last);
+    await tester.tap(find.bySemanticsLabel('Settings').last);
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('Targets & thresholds'));
     await tester.pump();

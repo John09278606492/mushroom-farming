@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/farm_repository.dart';
 import '../logic/alerts.dart';
+import '../logic/notices.dart';
 import '../models/farm_models.dart';
 
 /// A command the app sent that the controller has not confirmed yet.
@@ -31,7 +32,10 @@ class FarmState extends ChangeNotifier {
       repo.watchCamera().listen((v) => _set(() => camera = v)),
       repo.watchHarvest().listen((v) => _set(() => harvest = v)),
       repo.watchBatches().listen((v) => _set(() => batches = v)),
-      repo.watchConnection().listen((v) => _set(() => phoneConnected = v)),
+      repo.watchConnection().listen((v) => _set(() {
+            phoneConnected = v;
+            _checkAlerts();
+          })),
     ]);
     if (tickEverySecond) {
       _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
@@ -68,7 +72,51 @@ class FarmState extends ChangeNotifier {
   DateTime get now => _clock();
   bool get online => live.isOnline(now);
 
-  List<FarmAlert> get alerts => liveLoaded ? computeAlerts(live, setpoints, now) : const [];
+  List<FarmAlert> get alerts {
+    if (!phoneConnected) {
+      // Without internet every reading looks old, so "controller offline"
+      // would blame the farm for the phone's problem.
+      return [
+        phoneOfflineAlert,
+        if (liveLoaded)
+          ...computeAlerts(live, setpoints, now).where((a) => a.title != 'Controller offline'),
+      ];
+    }
+    return liveLoaded ? computeAlerts(live, setpoints, now) : const [];
+  }
+
+  static const phoneOfflineAlert = FarmAlert(Severity.critical, 'Phone has no internet',
+      'The app cannot reach the farm. The farm keeps running on its own.');
+
+  // ---- Notifications -------------------------------------------------------
+
+  final _tracker = AlertTracker();
+  final _notices = StreamController<Notice>.broadcast();
+
+  /// Fires when a problem starts or a serious one clears.
+  Stream<Notice> get notices => _notices.stream;
+
+  /// Newest first, kept for this session (the bell on the home screen).
+  final List<Notice> inbox = [];
+  int unread = 0;
+
+  void markInboxRead() => _set(() => unread = 0);
+
+  void clearInbox() => _set(() {
+        inbox.clear();
+        unread = 0;
+      });
+
+  void _checkAlerts() {
+    // Wait for the real targets too, or the defaults could raise false alarms.
+    if (phoneConnected && (!liveLoaded || !setpointsLoaded)) return;
+    for (final n in _tracker.update(alerts, now)) {
+      inbox.insert(0, n);
+      if (inbox.length > 100) inbox.removeLast();
+      unread++;
+      _notices.add(n);
+    }
+  }
 
   Batch? get openBatch {
     for (final b in batches) {
@@ -99,6 +147,7 @@ class FarmState extends ChangeNotifier {
       liveLoaded = true;
       _pendingDevices.removeWhere((d, p) => v.deviceOn(d) == p.want);
       if (_pendingMode != null && v.mode == _pendingMode!.want) _pendingMode = null;
+      _checkAlerts();
     });
   }
 
@@ -116,7 +165,7 @@ class FarmState extends ChangeNotifier {
       _pendingMode = null;
       _messages.add('Mode change: the controller did not respond.');
     }
-    _set(() {});
+    _set(_checkAlerts);
   }
 
   /// Returns an error message, or null when the command was sent.
@@ -174,6 +223,7 @@ class FarmState extends ChangeNotifier {
       s.cancel();
     }
     _messages.close();
+    _notices.close();
     super.dispose();
   }
 }

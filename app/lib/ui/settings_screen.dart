@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../data/demo_farm_repository.dart';
 import '../models/farm_models.dart';
+import '../services/notification_service.dart';
 import '../state/farm_state.dart';
 import 'home_shell.dart';
 import 'schedules_screen.dart';
@@ -21,7 +22,7 @@ class SettingsScreen extends StatelessWidget {
     final sprinklers = s.schedules[ScheduleDevice.sprinkler]!.whereType<Schedule>().length;
     final lights = s.schedules[ScheduleDevice.light]!.whereType<Schedule>().length;
 
-    return AiScaffold(
+    return AppScaffold(
       appBar: AppBar(title: const PageTitle('Settings'), actions: const [ConnectionChip()]),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
@@ -54,6 +55,8 @@ class SettingsScreen extends StatelessWidget {
               ),
             ]),
           ),
+          const SectionTitle('Notifications'),
+          const _NotificationSettings(),
           const SectionTitle('Controller'),
           Card(
             child: Column(children: [
@@ -79,12 +82,25 @@ class SettingsScreen extends StatelessWidget {
           if (s.repo is DemoFarmRepository) ...[
             const SectionTitle('Demo tools'),
             Card(
-              child: ListTile(
-                leading: const Icon(Icons.water_damage_outlined),
-                title: const Text('Simulate low water'),
-                subtitle: const Text('Drains the demo tank to show the water alerts.'),
-                onTap: () => (s.repo as DemoFarmRepository).drainWater(),
-              ),
+              child: Column(children: [
+                SwitchListTile(
+                  secondary: const Icon(Icons.wifi_off_rounded),
+                  title: const Text('Cut the controller WiFi'),
+                  subtitle: const Text('Updates stop. After 30 s the app says it is offline.'),
+                  value: (s.repo as DemoFarmRepository).wifiCut,
+                  onChanged: (v) {
+                    (s.repo as DemoFarmRepository).setWifiCut(v);
+                    showMessage(context, v ? 'WiFi cut. Wait 30 s for the offline alert.' : 'WiFi back.');
+                  },
+                ),
+                const Divider(height: 1, indent: 56),
+                ListTile(
+                  leading: const Icon(Icons.water_damage_outlined),
+                  title: const Text('Simulate low water'),
+                  subtitle: const Text('Drains the demo tank to show the water alerts.'),
+                  onTap: () => (s.repo as DemoFarmRepository).drainWater(),
+                ),
+              ]),
             ),
           ],
           const SectionTitle('Account'),
@@ -126,9 +142,7 @@ class _StageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    return GlassCard(
-      gradientBorder: selected,
-      glow: selected ? AppColors.violet : null,
+    return Panel(
       padding: EdgeInsets.zero,
       onTap: selected ? null : () => _apply(context),
       child: ConstrainedBox(
@@ -140,19 +154,16 @@ class _StageCard extends StatelessWidget {
             children: [
               Row(children: [
                 Icon(stage == GrowthStage.spawnRun ? Icons.dark_mode_outlined : Icons.spa,
-                    color: selected ? AppColors.cyan : AppColors.textDim),
+                    color: selected ? AppColors.primary : AppColors.inkDim),
                 const Spacer(),
-                if (selected) const Icon(Icons.check_circle, color: AppColors.cyan, size: 20),
+                if (selected) const Icon(Icons.check_circle, color: AppColors.primary, size: 20),
               ]),
               const SizedBox(height: 8),
-              selected
-                  ? GradientText(stage.label,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800))
-                  : Text(stage.label,
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.text)),
+              Text(stage.label,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.ink)),
               const SizedBox(height: 4),
-              Text(stage.summary, style: t.bodySmall?.copyWith(color: AppColors.textDim)),
+              Text(stage.summary, style: t.bodySmall?.copyWith(color: AppColors.inkDim)),
             ],
           ),
         ),
@@ -182,5 +193,65 @@ class _StageCard extends StatelessWidget {
     if (ok != true || !context.mounted) return;
     final err = await context.read<FarmState>().saveSetpoints(p);
     if (context.mounted) showMessage(context, err ?? '${stage.label} targets applied.');
+  }
+}
+
+class _NotificationSettings extends StatelessWidget {
+  const _NotificationSettings();
+
+  @override
+  Widget build(BuildContext context) {
+    final n = NotificationService.instance;
+    return ListenableBuilder(
+      listenable: n,
+      builder: (context, _) {
+        final String status;
+        if (!n.ready) {
+          status = 'Not supported here. Alerts still show inside the app.';
+        } else if (!n.allowed) {
+          status = 'Blocked. Tap "Allow" so alerts reach this device.';
+        } else {
+          status = 'Allowed on this device.';
+        }
+        return Card(
+          child: Column(children: [
+            SwitchListTile(
+              secondary: const Icon(Icons.notifications_active_outlined),
+              title: const Text('Farm alerts'),
+              subtitle: Text(status),
+              value: n.enabled,
+              onChanged: n.setEnabled,
+            ),
+            const Divider(height: 1, indent: 56),
+            SwitchListTile(
+              secondary: const Icon(Icons.priority_high_rounded),
+              title: const Text('Only critical problems'),
+              subtitle: const Text('Offline controller, water cut-off, phone offline'),
+              value: n.criticalOnly,
+              onChanged: n.enabled ? n.setCriticalOnly : null,
+            ),
+            const Divider(height: 1, indent: 56),
+            ListTile(
+              leading: const Icon(Icons.send_outlined),
+              title: Text(n.ready && !n.allowed ? 'Allow notifications' : 'Send a test notification'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                if (n.ready && !n.allowed) {
+                  final ok = await n.requestPermission();
+                  if (context.mounted) {
+                    showMessage(context, ok ? 'Notifications allowed.' : 'Still blocked. Allow them in the phone settings.');
+                  }
+                  return;
+                }
+                final shown = await n.showTest();
+                if (context.mounted && !shown) {
+                  showMessage(context, 'Test notification: farm alerts will look like this.');
+                }
+              },
+            ),
+          ]),
+        );
+      },
+    );
   }
 }
