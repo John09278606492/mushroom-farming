@@ -100,8 +100,9 @@ class LiveData {
 
   static const empty = LiveData();
 
-  /// The controller writes every 5 s; older than this means it is offline.
-  static const staleAfter = Duration(seconds: 30);
+  /// The controller writes every 10 s; older than this means it is offline.
+  /// Generous on purpose: one slow Wi-Fi moment must not raise an alarm.
+  static const staleAfter = Duration(seconds: 60);
 
   bool get hasData => updatedAt != null;
 

@@ -10,3 +10,6 @@ firmware/backup/
 
 # Arduino compile output
 firmware/**/build/
+
+# Wi-Fi and Firebase passwords for the body firmware
+firmware/body/secrets.h

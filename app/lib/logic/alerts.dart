@@ -34,7 +34,7 @@ List<FarmAlert> computeAlerts(LiveData live, Setpoints sp, DateTime now) {
 
   if (!live.isOnline(now)) {
     alerts.add(const FarmAlert(Severity.critical, 'Controller offline',
-        'No update for over 30 seconds. The farm keeps running on its own, '
+        'No update for over a minute. The farm keeps running on its own, '
             'but readings below are old and controls are paused.'));
   }
 

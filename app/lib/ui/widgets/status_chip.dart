@@ -5,7 +5,7 @@ import '../../logic/alerts.dart';
 import '../../state/farm_state.dart';
 import '../theme.dart';
 
-/// "● Online · 3 s ago" / "● Offline" status for app bars.
+/// "● Online" / "● Offline · 2 min ago" status for app bars.
 class ConnectionChip extends StatelessWidget {
   const ConnectionChip({super.key});
 
@@ -21,7 +21,9 @@ class ConnectionChip extends StatelessWidget {
       text = 'Waiting…';
       sev = Severity.info;
     } else if (s.online) {
-      text = 'Online · ${timeAgo(s.live.updatedAt!, s.now)}';
+      // No seconds counter here: the controller sends changes at once and a
+      // heartbeat every 15 s, so a ticking "12 s ago" only looked like lag.
+      text = 'Online';
       sev = Severity.ok;
     } else {
       text = 'Offline · ${timeAgo(s.live.updatedAt!, s.now)}';

@@ -14,3 +14,7 @@ struct Schedule {
 };
 
 struct Clock { int year, month, day, hour, minute, second; };
+
+// Where a command came from. Changes made on the HMI or USB are sent up to
+// the cloud; changes that came from the cloud are not sent back.
+enum Source { SRC_HMI, SRC_USB, SRC_CLOUD };

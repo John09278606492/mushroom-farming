@@ -100,12 +100,16 @@ class FirebaseFarmRepository implements FarmRepository {
   @override
   Future<void> setMode(FarmMode mode) => _root.child('control').update({
         'mode': mode.name,
+        // The controller acts when this time changes, so a tap is never
+        // missed and an old value is never replayed after a reboot.
+        'modeAt': ServerValue.timestamp,
         'updatedAt': ServerValue.timestamp,
       });
 
   @override
   Future<void> setDevice(DeviceId device, bool on) => _root.child('control').update({
         'devices/${device.key}': on,
+        'at/${device.key}': ServerValue.timestamp,
         'updatedAt': ServerValue.timestamp,
       });
 

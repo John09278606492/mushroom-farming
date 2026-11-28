@@ -8,11 +8,11 @@ Rules that come from the handoff (do not change):
 
 Everything lives under one farm root: `farm1/`.
 
-## `farm1/live` (ESP32 → app, every 5 s)
+## `farm1/live` (ESP32 → app, every 10 s)
 
 | Field | Type | Meaning |
 |---|---|---|
-| `updatedAt` | number (ms) | Write `{".sv": "timestamp"}` (server time). The app marks the controller **offline** if this is older than 30 s. |
+| `updatedAt` | number (ms) | Write `{".sv": "timestamp"}` (server time). The app marks the controller **offline** if this is older than 60 s. |
 | `temp` | number | °C |
 | `rh` | number | % relative humidity |
 | `co2` | number | ppm (`-1` if the sensor has no reading) |
@@ -27,19 +27,30 @@ Everything lives under one farm root: `farm1/`.
 | `rtc` | string | `"YYYY-MM-DD HH:MM:SS"` from the DS3231 |
 | `rssi` | number | Wi-Fi signal (dBm), optional |
 | `fw` | string | Firmware version, optional |
+| `boxPower` | bool | A sensor answered recently (box supply looks on), optional |
+| `refillTimedOut` | bool | Refill pump stopped after 15 min straight, optional |
+| `sensors/th`, `sensors/co2`, `sensors/rtc` | bool | Each sensor answered recently, optional |
+
+`temp` and `rh` are `null` when the AM2302 has had no good reading for 60 s.
 
 ## `farm1/control` (app → ESP32)
 
 | Field | Type | Meaning |
 |---|---|---|
 | `mode` | string | Desired mode: `"auto"` or `"manual"` |
+| `modeAt` | number (ms) | Server timestamp of the last mode tap |
 | `devices/<name>` | bool | Desired on/off for `mist`, `fan`, `refill`, `sprinkler`, `light` |
+| `at/<name>` | number (ms) | Server timestamp of the last tap on that device |
 | `updatedAt` | number (ms) | Server timestamp of the last command |
 
-How the ESP32 applies commands (same as the original UART firmware):
-- **Auto mode:** `mist`, `fan` and `refill` follow the thresholds. Manual commands for these three are ignored. `sprinkler` and `light` follow their schedules, but a manual command still works (like `SPRINKLER_ON` / `LIGHT_ON` today).
-- **Manual mode:** every device follows `control/devices/*`.
-- **Safety:** if `waterCutoff` is true, the ESP32 lets `refill` keep running (to fill the reservoir) but forces `sprinkler` and `mist` OFF, in every mode.
+How the ESP32 applies commands (`firmware/body/cloud.cpp`):
+- A command runs only when its timestamp (`modeAt`, `at/<name>`) changes. The first read after a reboot only records the timestamps, so nothing switches by itself and the HMI's later changes are not overwritten by an old app value.
+- Each command becomes the same text command the HMI sends (`FAN_ON`, `AUTO_OFF`, …), so the HMI and the app behave the same.
+- **Auto mode:** `mist`, `fan` and `refill` follow the thresholds; a tap on one of them holds it for 15 min, then auto takes over again. `sprinkler` and `light` follow their schedules, and a tap still works (a manual sprinkler run stops after 10 min).
+- **Manual mode:** every device follows the taps.
+- **Safety:** if `waterCutoff` is true, the ESP32 lets `refill` keep running (to fill the reservoir) but forces `sprinkler` and `mist` OFF, in every mode. (Needs the 2nd float switch; not installed yet.)
+
+Setpoints and schedules go both ways: the ESP32 applies `setpoints` when `updatedAt` changes and `schedules` when their content changes, and writes them back when they are changed on the HMI.
 
 The app shows a command as "pending" until `live/devices/<name>` matches `control/devices/<name>`.
 

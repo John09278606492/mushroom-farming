@@ -131,6 +131,18 @@ bool lowWater=false,mistState=false,refillState=false;
 bool sprinklerState=false,fanState=false,lightState=false;
 bool autoMode=true;
 String rtcTime="";
+// Wi-Fi of the body (it does the internet; the HMI only shows and sets it)
+int wifiSt=0,wifiRssi=0;bool cloudOn=false;String wifiName="";
+String toHex(const String&s){
+  static const char*H="0123456789ABCDEF";String o;
+  for(unsigned i=0;i<s.length();i++){uint8_t b=s[i];o+=H[b>>4];o+=H[b&15];}
+  return o;
+}
+String fromHex(const String&h){
+  String o;
+  for(unsigned i=0;i+1<h.length();i+=2){char b[3]={h[i],h[i+1],0};o+=(char)strtol(b,NULL,16);}
+  return o;
+}
 String sprSchedText="NONE",lgtSchedText="NONE";
 float humOn=85,humOff=95;
 int co2On=800,co2Off=700;
@@ -232,6 +244,10 @@ void parseStatus(String line){
   v=getFieldValue(line,"CO2_ON");   if(v.length())co2On=v.toInt();
   v=getFieldValue(line,"CO2_OFF");  if(v.length())co2Off=v.toInt();
   v=getFieldValue(line,"TIME");     if(v.length())rtcTime=v;
+  v=getFieldValue(line,"WIFI_ST");  if(v.length())wifiSt=v.toInt();
+  v=getFieldValue(line,"WIFI_RSSI");if(v.length())wifiRssi=v.toInt();
+  v=getFieldValue(line,"WIFI_NAME");if(v.length()||line.indexOf(",WIFI_NAME=")>=0)wifiName=fromHex(v);
+  v=getFieldValue(line,"CLOUD");    if(v.length())cloudOn=v.toInt();
   v=getFieldValue(line,"SPR_SCHED");if(v.length()&&v!=sprSchedText){sprSchedText=v;parseSlots(v,sprSlots);}
   v=getFieldValue(line,"LGT_SCHED");if(v.length()&&v!=lgtSchedText){lgtSchedText=v;parseSlots(v,lgtSlots);}
 }
@@ -395,7 +411,7 @@ bool needBody(){
 // =====================================================
 // PAGES
 // =====================================================
-lv_obj_t *pgHome,*pgSpr,*pgLgt,*pgMist,*pgFan,*pgSchedList,*pgSched,*pgRTC;
+lv_obj_t *pgHome,*pgSpr,*pgLgt,*pgMist,*pgFan,*pgSchedList,*pgSched,*pgRTC,*pgWifi,*pgWifiPass;
 lv_obj_t *schedReturnPage=NULL;
 #define MAX_PILLS 10
 lv_obj_t *pillDot[MAX_PILLS],*pillLbl[MAX_PILLS];int nPills=0;
@@ -432,14 +448,21 @@ void header(lv_obj_t*p,const char*title,const char*sub,const lv_image_dsc_t*ic,l
   lv_obj_t*b=btn(p,LV_SYMBOL_LEFT,16,12,52,52,C_SURF,C_TEXT,backCb?backCb:cb_goHome,0,F20);
   lv_obj_set_style_border_color(b,C_LINE,0);lv_obj_set_style_border_width(b,1,0);
   lv_obj_set_style_radius(b,16,0);
-  badge(p,ic,acc,80,12,52);
+  if(ic)badge(p,ic,acc,80,12,52);
+  else{  // no image: a Wi-Fi symbol in the same tinted square
+    lv_obj_t*b=lv_obj_create(p);lv_obj_remove_style_all(b);
+    lv_obj_set_pos(b,80,12);lv_obj_set_size(b,52,52);lv_obj_set_style_radius(b,15,0);
+    lv_obj_set_style_bg_color(b,lv_color_mix(acc,C_SURF,48),0);lv_obj_set_style_bg_opa(b,LV_OPA_COVER,0);
+    lv_obj_remove_flag(b,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t*s=txt(b,LV_SYMBOL_WIFI,F28,acc,0,0);lv_obj_center(s);
+  }
   lv_obj_t*t=txt(p,title,F28,C_TEXT,146,10);
   txt(p,sub,F14,C_MUTED,146,44);
   if(titleOut)*titleOut=t;
   connectionPill(p);
 }
 void showPage(lv_obj_t*p){
-  lv_obj_t*all[]={pgHome,pgSpr,pgLgt,pgMist,pgFan,pgSchedList,pgSched,pgRTC};
+  lv_obj_t*all[]={pgHome,pgSpr,pgLgt,pgMist,pgFan,pgSchedList,pgSched,pgRTC,pgWifi,pgWifiPass};
   for(lv_obj_t*o:all)if(o&&o!=p)setHidden(o,true);
   setHidden(p,false);
 }
@@ -568,6 +591,7 @@ void updateConnection(){
     setTextIf(pillLbl[i],bodyConnected?"Body online":"Body offline");
     setColorIf(pillLbl[i],bodyConnected?C_TEXT:C_MUTED);
   }
+  updateWifiUi();
 }
 void sensorChip(SensorCard&s,const char*t,lv_color_t c){
   if(!t){setHidden(s.chipBox,true);return;}
@@ -833,6 +857,7 @@ void buildHome(){
   lblTime=txt(clk,"--:--",F28,C_TEXT,0,0);lv_obj_align(lblTime,LV_ALIGN_TOP_RIGHT,-10,0);
   lblDate=txt(clk,"Hold to set the clock",F14,C_MUTED,0,0);lv_obj_align(lblDate,LV_ALIGN_TOP_RIGHT,-10,34);
   connectionPill(pgHome);
+  buildWifiChip();
 
   // sensors
   buildSensorCard(scHum,16,"Humidity",&ic_humidity_40,A_HUM,"%",0,100);
@@ -983,6 +1008,193 @@ void buildRTCPage(){
   btn(pgRTC,LV_SYMBOL_OK "  Set the clock",16,394,768,70,A_WATER,C_BG,cb_rtc,RT_APPLY);
 }
 
+// =====================================================
+// WI-FI SETTINGS
+// The body does the internet. This page shows its Wi-Fi state, asks it to
+// scan, and sends the chosen network and password (hex + checksum, re-sent
+// until the body confirms, because the wire can damage a byte).
+// =====================================================
+lv_obj_t *wifiChip=NULL,*wifiChipLbl=NULL;
+lv_obj_t *lblWifiState,*lblWifiDetail,*lblCloud,*lblScanHint,*wifiList;
+lv_obj_t *taPass,*kbd,*lblPassFor,*btnShow;
+#define MAX_NETS 10
+String netNames[MAX_NETS];int nNets=0;
+String pickedSsid;
+bool scanning=false;unsigned long scanAt=0;
+String pendingWifiCmd;unsigned long wifiSentAt=0;uint8_t wifiTries=0;
+
+const char* signalWord(int rssi){
+  if(rssi>=-60)return "Excellent";if(rssi>=-70)return "Good";if(rssi>=-80)return "Fair";return "Weak";
+}
+String signalBars(int rssi){
+  int n=rssi>=-60?4:rssi>=-70?3:rssi>=-80?2:1;String s;
+  for(int i=0;i<4;i++)s+=(i<n)?"|":".";return s;
+}
+
+void updateWifiUi(){
+  lv_color_t c=C_MUTED;const char*state="Not set";String detail="Tap Scan and pick your Wi-Fi";
+  switch(wifiSt){
+    case 1:c=C_WARN;state="Connecting...";detail="Network: "+wifiName;break;
+    case 2:c=C_OK;state="Connected";
+      detail="Network: "+wifiName+"\nSignal: "+signalWord(wifiRssi)+" ("+String(wifiRssi)+" dBm)";break;
+    case 3:c=C_BAD;state="Wrong password";detail="Network: "+wifiName+"\nPick it again and retype the password";break;
+    case 4:c=C_BAD;state="Not found";detail="Network: "+wifiName+"\nOut of range or switched off";break;
+    case 5:c=C_BAD;state="Could not connect";detail="Network: "+wifiName;break;
+    case 6:c=C_BAD;state="No internet";
+      detail="Network: "+wifiName+"\nPassword OK, but this Wi-Fi gives no address (it needs a login page or a registered device). Try a phone hotspot";break;
+  }
+  if(!bodyConnected){c=C_MUTED;state="Body offline";detail="The controller is not answering";}
+  setTextIf(lblWifiState,state);setColorIf(lblWifiState,c);
+  setTextIf(lblWifiDetail,detail);
+  bool app=bodyConnected&&wifiSt==2&&cloudOn;
+  setTextIf(lblCloud,app?"Phone app: online":(bodyConnected&&wifiSt==2?"Phone app: connecting to Firebase...":"Phone app: offline"));
+  setColorIf(lblCloud,app?C_OK:C_MUTED);
+  // home chip
+  setColorIf(wifiChipLbl,!bodyConnected?C_MUTED:wifiSt==2?(cloudOn?C_OK:C_WARN):wifiSt==1?C_WARN:wifiSt==0?C_MUTED:C_BAD);
+}
+
+void cb_goWifi(lv_event_t*e);
+void cb_scan(lv_event_t*e){LV_UNUSED(e);
+  if(!needBody())return;
+  sendCommand("WIFI_SCAN");scanning=true;scanAt=millis();
+  lv_obj_clean(wifiList);nNets=0;
+  setTextIf(lblScanHint,"Scanning... (about 5 seconds)");setHidden(lblScanHint,false);
+}
+void cb_goWifi(lv_event_t*e){LV_UNUSED(e);
+  lv_keyboard_set_textarea(kbd,NULL);
+  showPage(pgWifi);updateWifiUi();
+  if(nNets==0&&!scanning&&bodyConnected)cb_scan(NULL);
+}
+void cb_pickNet(lv_event_t*e){
+  int i=(int)(intptr_t)lv_event_get_user_data(e);if(i<0||i>=nNets)return;
+  pickedSsid=netNames[i];
+  setTextIf(lblPassFor,"Network:  "+pickedSsid);
+  lv_textarea_set_text(taPass,"");lv_textarea_set_password_mode(taPass,true);
+  setTextIf(lv_obj_get_child(btnShow,0),"Show");
+  lv_keyboard_set_textarea(kbd,taPass);
+  showPage(pgWifiPass);
+}
+void cb_showPass(lv_event_t*e){LV_UNUSED(e);
+  bool hidden=lv_textarea_get_password_mode(taPass);
+  lv_textarea_set_password_mode(taPass,!hidden);
+  setTextIf(lv_obj_get_child(btnShow,0),hidden?"Hide":"Show");
+}
+void sendWifi(){
+  wifiSentAt=millis();wifiTries++;
+  sendCommand(pendingWifiCmd);
+}
+void cb_connect(lv_event_t*e){LV_UNUSED(e);
+  if(!needBody())return;
+  String pass=lv_textarea_get_text(taPass);
+  if(pass.length()>0&&pass.length()<8){showToast(LV_SYMBOL_WARNING "  Wi-Fi passwords have at least 8 characters");return;}
+  uint8_t sum=0;
+  for(unsigned i=0;i<pickedSsid.length();i++)sum+=(uint8_t)pickedSsid[i];
+  for(unsigned i=0;i<pass.length();i++)sum+=(uint8_t)pass[i];
+  char cs[3];snprintf(cs,sizeof(cs),"%02X",sum);
+  pendingWifiCmd="SET_WIFI="+toHex(pickedSsid)+","+toHex(pass)+","+cs;
+  wifiTries=0;sendWifi();
+  lv_textarea_set_text(taPass,"");
+  wifiName=pickedSsid;wifiSt=1;
+  cb_goWifi(NULL);
+  showToast(LV_SYMBOL_WIFI "  Sending to the controller...");
+}
+void kbdEvent(lv_event_t*e){
+  lv_event_code_t code=lv_event_get_code(e);
+  if(code==LV_EVENT_READY)cb_connect(NULL);
+  else if(code==LV_EVENT_CANCEL)cb_goWifi(NULL);
+}
+
+// Called from loop() for "WIFI_LIST,..." and "WIFI_SET,..." lines.
+void onWifiLine(const String&line){
+  if(line.startsWith("WIFI_SET,")){
+    if(pendingWifiCmd.isEmpty())return;
+    if(line.indexOf("OK")>0){pendingWifiCmd="";showToast(LV_SYMBOL_OK "  Saved. Connecting to Wi-Fi...");}
+    else if(wifiTries<4)sendWifi();   // damaged on the wire: send again
+    else{pendingWifiCmd="";showToast(LV_SYMBOL_WARNING "  Could not send. Try again");}
+    return;
+  }
+  // WIFI_LIST,<count>,<rssi>:<hex>;...
+  scanning=false;
+  lv_obj_clean(wifiList);nNets=0;
+  int p=line.indexOf(',',10);if(p<0)return;
+  String items=line.substring(p+1);
+  int start=0;
+  while(nNets<MAX_NETS){
+    int semi=items.indexOf(';',start);if(semi<0)break;
+    String it=items.substring(start,semi);start=semi+1;
+    int colon=it.indexOf(':');if(colon<0)continue;
+    int rssi=it.substring(0,colon).toInt();
+    String name=fromHex(it.substring(colon+1));
+    if(name.isEmpty())continue;
+    netNames[nNets]=name;
+    lv_obj_t*b=lv_list_add_button(wifiList,LV_SYMBOL_WIFI,name.c_str());
+    lv_obj_set_height(b,52);
+    lv_obj_set_style_bg_color(b,C_SURF2,0);lv_obj_set_style_bg_color(b,lv_color_mix(lv_color_white(),C_SURF2,40),LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(b,C_TEXT,0);lv_obj_set_style_text_font(b,F16,0);
+    lv_obj_set_style_radius(b,12,0);lv_obj_set_style_border_width(b,0,0);
+    lv_obj_t*bars=lv_label_create(b);lv_label_set_text(bars,signalBars(rssi).c_str());
+    lv_obj_set_style_text_color(bars,rssi>=-70?C_OK:rssi>=-80?C_WARN:C_BAD,0);
+    lv_obj_add_event_cb(b,cb_pickNet,LV_EVENT_CLICKED,(void*)(intptr_t)nNets);
+    nNets++;
+  }
+  setTextIf(lblScanHint,nNets?"Tap your Wi-Fi:":"No Wi-Fi found. Move closer and scan again");
+}
+
+// Called from loop(): re-send the Wi-Fi details until the body confirms,
+// and give up on a scan that never answers.
+void wifiTick(){
+  if(!pendingWifiCmd.isEmpty()&&millis()-wifiSentAt>1500){
+    if(wifiTries<4)sendWifi();
+    else{pendingWifiCmd="";showToast(LV_SYMBOL_WARNING "  Could not send. Try again");}
+  }
+  if(scanning&&millis()-scanAt>15000){scanning=false;setTextIf(lblScanHint,"No answer. Tap Scan again");}
+}
+
+void buildWifiChip(){
+  wifiChip=lv_obj_create(pgHome);lv_obj_remove_style_all(wifiChip);
+  lv_obj_set_pos(wifiChip,244,16);lv_obj_set_size(wifiChip,122,40);
+  lv_obj_set_style_radius(wifiChip,LV_RADIUS_CIRCLE,0);
+  lv_obj_set_style_bg_color(wifiChip,C_SURF,0);lv_obj_set_style_bg_opa(wifiChip,LV_OPA_COVER,0);
+  lv_obj_set_style_border_color(wifiChip,C_LINE,0);lv_obj_set_style_border_width(wifiChip,1,0);
+  makeTappable(wifiChip,cb_goWifi);lv_obj_remove_flag(wifiChip,LV_OBJ_FLAG_SCROLLABLE);
+  wifiChipLbl=txt(wifiChip,LV_SYMBOL_WIFI "  Wi-Fi",F16,C_MUTED,0,0);lv_obj_center(wifiChipLbl);
+}
+
+void buildWifiPages(){
+  pgWifi=newPage();
+  header(pgWifi,"Wi-Fi","Internet for the phone app",NULL,A_WATER);
+  lv_obj_t*l=card(pgWifi,16,76,372,392,18);
+  txt(l,"Status",F14,C_MUTED,0,0);
+  lblWifiState=txt(l,"--",F28,C_TEXT,0,22);
+  lblWifiDetail=txt(l,"",F16,C_TEXT,0,70);lv_obj_set_width(lblWifiDetail,330);
+  lv_label_set_long_mode(lblWifiDetail,LV_LABEL_LONG_MODE_WRAP);lv_obj_set_style_text_line_space(lblWifiDetail,6,0);
+  lblCloud=txt(l,"Phone app: offline",F16,C_MUTED,0,240);
+  btn(l,LV_SYMBOL_REFRESH "  Scan for Wi-Fi",0,290,334,62,A_WATER,C_BG,cb_scan);
+
+  lv_obj_t*r=card(pgWifi,400,76,384,392,18);
+  lblScanHint=txt(r,"Tap Scan to look for Wi-Fi",F16,C_MUTED,0,0);
+  wifiList=lv_list_create(r);lv_obj_set_pos(wifiList,0,32);lv_obj_set_size(wifiList,346,318);
+  lv_obj_set_style_bg_opa(wifiList,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(wifiList,0,0);
+  lv_obj_set_style_pad_all(wifiList,0,0);lv_obj_set_style_pad_row(wifiList,8,0);
+
+  pgWifiPass=newPage();
+  header(pgWifiPass,"Wi-Fi password","Type it with the keyboard, then Connect",NULL,A_WATER,NULL,cb_goWifi);
+  lblPassFor=txt(pgWifiPass,"Network:",F16,C_MUTED,20,84);
+  taPass=lv_textarea_create(pgWifiPass);
+  lv_obj_set_pos(taPass,16,112);lv_obj_set_size(taPass,476,56);
+  lv_textarea_set_one_line(taPass,true);lv_textarea_set_password_mode(taPass,true);
+  lv_textarea_set_max_length(taPass,63);lv_textarea_set_placeholder_text(taPass,"Password");
+  lv_obj_set_style_text_font(taPass,F20,0);
+  lv_obj_set_style_bg_color(taPass,C_SURF,0);lv_obj_set_style_border_color(taPass,C_LINE,0);
+  lv_obj_set_style_radius(taPass,14,0);
+  btnShow=btn(pgWifiPass,"Show",504,112,120,56,C_SURF2,C_TEXT,cb_showPass,0,F16);
+  btn(pgWifiPass,LV_SYMBOL_OK "  Connect",636,112,148,56,A_WATER,C_BG,cb_connect,0,F16);
+  kbd=lv_keyboard_create(pgWifiPass);
+  lv_obj_set_size(kbd,SCREEN_W,296);lv_obj_align(kbd,LV_ALIGN_BOTTOM_MID,0,0);
+  lv_obj_set_style_text_font(kbd,F20,0);
+  lv_obj_add_event_cb(kbd,kbdEvent,LV_EVENT_ALL,NULL);
+}
+
 void buildToast(){
   toastBox=lv_obj_create(lv_layer_top());lv_obj_remove_style_all(toastBox);
   lv_obj_set_size(toastBox,LV_SIZE_CONTENT,LV_SIZE_CONTENT);
@@ -1021,7 +1233,7 @@ void setup(){
 
   initRollerOptions();
   parseSlots(sprSchedText,sprSlots);parseSlots(lgtSchedText,lgtSlots);
-  buildHome();buildDevicePages();buildSchedListPage();buildSchedPage();buildRTCPage();buildToast();
+  buildHome();buildDevicePages();buildSchedListPage();buildSchedPage();buildRTCPage();buildWifiPages();buildToast();
   updateHome();
   checkBodyConnection();
 
@@ -1032,6 +1244,9 @@ void setup(){
 
   // The body link uses the same pins as the USB serial port (43/44),
   // so nothing more is printed to USB after this point.
+  // Big buffers: a STATUS or WIFI_LIST line is longer than the default 256 bytes
+  // and the screen can keep loop() busy for tens of ms.
+  bodySerial.setRxBufferSize(4096);bodySerial.setTxBufferSize(1024);
   bodySerial.begin(115200,SERIAL_8N1,LCD_RX_FROM_SLAVE,LCD_TX_TO_SLAVE);
   bodySerial.setPins(LCD_RX_FROM_SLAVE,LCD_TX_TO_SLAVE,-1,-1);
 }
@@ -1049,12 +1264,17 @@ void loop(){
       // Noise on the wire can put junk in front of a line: start at "STATUS,".
       int k=rx.indexOf("STATUS,");
       if(k>=0){String line=rx.substring(k);line.trim();parseStatus(line);gotStatus=true;}
+      else{
+        int w=rx.indexOf("WIFI_LIST,");if(w<0)w=rx.indexOf("WIFI_SET,");
+        if(w>=0){String line=rx.substring(w);line.trim();onWifiLine(line);}
+      }
       rx="";
-    }else if(c>=0x20&&c<=0x7E&&rx.length()<600){
+    }else if(c>=0x20&&c<=0x7E&&rx.length()<1200){
       rx+=c;
     }
   }
-  if(gotStatus)updateHome();
+  if(gotStatus){updateHome();updateWifiUi();}
+  wifiTick();
 
   // The body sends STATUS every 2 s; only ask when it has gone quiet.
   static unsigned long lastReq=0;

@@ -36,11 +36,12 @@ void main() {
       expect(LiveData.fromMap('x').hasData, isFalse);
     });
 
-    test('online only when updated within 30 s', () {
+    test('online only when updated within 60 s', () {
       final now = DateTime(2026, 11, 17, 12);
       final live = LiveData(updatedAt: now.subtract(const Duration(seconds: 10)));
       expect(live.isOnline(now), isTrue);
-      expect(live.isOnline(now.add(const Duration(seconds: 25))), isFalse);
+      expect(live.isOnline(now.add(const Duration(seconds: 45))), isTrue);
+      expect(live.isOnline(now.add(const Duration(seconds: 55))), isFalse);
     });
   });
 

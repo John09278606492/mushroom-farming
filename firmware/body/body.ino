@@ -27,6 +27,7 @@
 #include <Preferences.h>
 #include <HardwareSerial.h>
 #include "body_types.h"
+#include "cloud.h"
 
 // ---------------- Pins ----------------
 #define DHT_PIN              4
@@ -77,6 +78,8 @@ bool  autoMode = false;   // first boot: manual, everything off
 Schedule sprSched[MAX_SCHEDULES];
 Schedule lgtSched[MAX_SCHEDULES];
 int nSpr = 0, nLgt = 0;
+// Bumped when the HMI or USB changes setpoints/schedules (sent up to the app).
+uint32_t setpointsVer = 1, schedulesVer = 1;
 
 // ---------------- Live state ----------------
 bool mistOn = false, refillOn = false, sprinklerOn = false, fanOn = false, lightOn = false;
@@ -544,12 +547,42 @@ void sendStatus() {
   p += ",SENS_RTC=" + String(rtcOk ? 1 : 0);
   p += ",REFILL_TIMEOUT=" + String(refillTimedOut ? 1 : 0);
   p += ",BOX_POWER=" + String(boxPowered() ? 1 : 0);
+  p += ",WIFI=" + String(cloudWifiUp() ? 1 : 0);
+  p += ",CLOUD=" + String(cloudOnline() ? 1 : 0);
+  p += ",WIFI_ST=" + String(cloudWifiState());
+  p += ",WIFI_RSSI=" + String(cloudRssi());
+  p += ",WIFI_NAME=" + toHex(cloudWifiName());
   p += ",HOLD_MIST=" + String(holding(mistHoldUntil) ? 1 : 0);
   p += ",HOLD_FAN=" + String(holding(fanHoldUntil) ? 1 : 0);
   p += ",HOLD_REFILL=" + String(holding(refillHoldUntil) ? 1 : 0);
   p += ",TIME=" + timeString();
   hmiSerial.println(p);
   Serial.println(p);
+  publishToCloud();
+}
+
+void publishToCloud() {
+  Snapshot s{};
+  s.autoMode = autoMode;
+  s.thFresh = dhtFresh();
+  s.humidity = humidity;
+  s.temperature = temperature;
+  s.co2Fresh = co2Fresh();
+  s.co2ppm = co2ppm;
+  s.lowWater = lowWater;
+  s.mist = mistOn; s.refill = refillOn; s.sprinkler = sprinklerOn; s.fan = fanOn; s.light = lightOn;
+  s.rtcOk = rtcOk;
+  s.boxPower = boxPowered();
+  s.refillTimedOut = refillTimedOut;
+  Clock c;
+  if (getNow(c)) snprintf(s.time, sizeof(s.time), "%04d-%02d-%02d %02d:%02d:%02d", c.year, c.month, c.day, c.hour, c.minute, c.second);
+  s.humOn = humOn; s.humOff = humOff; s.co2On = co2On; s.co2Off = co2Off;
+  memcpy(s.spr, sprSched, sizeof(sprSched));
+  memcpy(s.lgt, lgtSched, sizeof(lgtSched));
+  s.nSpr = nSpr; s.nLgt = nLgt;
+  s.setpointsVer = setpointsVer;
+  s.schedulesVer = schedulesVer;
+  cloudPublish(s);
 }
 
 // =====================================================
@@ -581,12 +614,51 @@ void applySchedule(Schedule *s, int &n, const String &args) {
   if (idx >= n) n = idx + 1;
 }
 
-void handleCommand(String cmd) {
+// ---------------- Wi-Fi settings from the HMI ----------------
+String toHex(const String &s) {
+  static const char *H = "0123456789ABCDEF";
+  String out;
+  for (unsigned i = 0; i < s.length(); i++) { uint8_t b = s[i]; out += H[b >> 4]; out += H[b & 15]; }
+  return out;
+}
+
+bool fromHex(const String &h, String &out) {
+  if (h.length() % 2) return false;
+  out = "";
+  for (unsigned i = 0; i < h.length(); i += 2) {
+    char buf[3] = {h[i], h[i + 1], 0};
+    char *end;
+    long v = strtol(buf, &end, 16);
+    if (*end) return false;
+    out += (char)v;
+  }
+  return true;
+}
+
+// "<ssid hex>,<password hex>,<checksum hex>": the checksum (sum of all name
+// and password bytes, low 8 bits) catches a line damaged on the wire.
+bool parseSetWifi(const String &args, String &ssid, String &pass) {
+  int a = args.indexOf(','), b = args.indexOf(',', a + 1);
+  if (a < 0 || b < 0) return false;
+  if (!fromHex(args.substring(0, a), ssid) || !fromHex(args.substring(a + 1, b), pass)) return false;
+  uint8_t sum = 0;
+  for (unsigned i = 0; i < ssid.length(); i++) sum += (uint8_t)ssid[i];
+  for (unsigned i = 0; i < pass.length(); i++) sum += (uint8_t)pass[i];
+  String want = args.substring(b + 1);
+  want.trim();
+  return ssid.length() >= 1 && ssid.length() <= 32 && pass.length() <= 63 && strtol(want.c_str(), nullptr, 16) == sum;
+}
+
+void spChanged(Source src)  { if (src != SRC_CLOUD) setpointsVer++; }
+void schChanged(Source src) { if (src != SRC_CLOUD) schedulesVer++; }
+
+void handleCommand(String cmd, Source src) {
   cmd.trim();
   if (cmd.length() == 0) return;
   String up = cmd;
   up.toUpperCase();
-  Serial.println("CMD: " + cmd);
+  // Never print a Wi-Fi password.
+  Serial.println(up.startsWith("SET_WIFI=") ? String("CMD: SET_WIFI=(hidden)") : "CMD: " + cmd);
   bool ok = true;
 
   if (up == "AUTO_ON") {
@@ -632,18 +704,29 @@ void handleCommand(String cmd) {
       }
     }
   }
-  else if (up.startsWith("SET_HUM_ON="))  { humOn = constrain(cmd.substring(11).toFloat(), 30, 100); saveSettings(); }
-  else if (up.startsWith("SET_HUM_OFF=")) { humOff = constrain(cmd.substring(12).toFloat(), 30, 100); saveSettings(); }
-  else if (up.startsWith("SET_CO2_ON="))  { co2On = constrain(cmd.substring(11).toInt(), 300, 10000); saveSettings(); }
-  else if (up.startsWith("SET_CO2_OFF=")) { co2Off = constrain(cmd.substring(12).toInt(), 300, 10000); saveSettings(); }
-  else if (up.startsWith("SET_SPR_SCHED=")) { applySchedule(sprSched, nSpr, cmd.substring(14)); saveSettings(); }
-  else if (up == "CLEAR_SPR_SCHED") { clearScheds(sprSched, nSpr); saveSettings(); }
-  else if (up.startsWith("SET_LGT_SCHED=")) { applySchedule(lgtSched, nLgt, cmd.substring(14)); saveSettings(); }
-  else if (up == "CLEAR_LGT_SCHED") { clearScheds(lgtSched, nLgt); saveSettings(); }
+  else if (up.startsWith("SET_HUM_ON="))  { humOn = constrain(cmd.substring(11).toFloat(), 30, 100); saveSettings(); spChanged(src); }
+  else if (up.startsWith("SET_HUM_OFF=")) { humOff = constrain(cmd.substring(12).toFloat(), 30, 100); saveSettings(); spChanged(src); }
+  else if (up.startsWith("SET_CO2_ON="))  { co2On = constrain(cmd.substring(11).toInt(), 300, 10000); saveSettings(); spChanged(src); }
+  else if (up.startsWith("SET_CO2_OFF=")) { co2Off = constrain(cmd.substring(12).toInt(), 300, 10000); saveSettings(); spChanged(src); }
+  else if (up.startsWith("SET_SPR_SCHED=")) { applySchedule(sprSched, nSpr, cmd.substring(14)); saveSettings(); schChanged(src); }
+  else if (up == "CLEAR_SPR_SCHED") { clearScheds(sprSched, nSpr); saveSettings(); schChanged(src); }
+  else if (up.startsWith("SET_LGT_SCHED=")) { applySchedule(lgtSched, nLgt, cmd.substring(14)); saveSettings(); schChanged(src); }
+  else if (up == "CLEAR_LGT_SCHED") { clearScheds(lgtSched, nLgt); saveSettings(); schChanged(src); }
+  else if (up == "WIFI_SCAN") { cloudRequestScan(); return; }
+  else if (up.startsWith("SET_WIFI=")) {
+    String ssid, pass;
+    bool good = parseSetWifi(cmd.substring(9), ssid, pass);
+    if (good) cloudSetWifi(ssid, pass);
+    hmiSerial.println(good ? "WIFI_SET,OK" : "WIFI_SET,ERR");
+    Serial.println(good ? "WIFI_SET,OK (saved: " + ssid + ")" : String("WIFI_SET,ERR (damaged on the wire, HMI will resend)"));
+    return;
+  }
   else if (up == "INFO") {
-    Serial.printf("INFO dht good=%u bad=%u fresh=%d  co2 fresh=%d  rtc=%d softclock=%d  box=%d  float raw=%s\n",
+    Serial.printf("INFO dht good=%u bad=%u fresh=%d  co2 fresh=%d  rtc=%d softclock=%d  box=%d  float raw=%s  cloud=%s\n",
                   dhtGood, dhtBad, dhtFresh(), co2Fresh(), rtcOk, swClockSet, boxPowered(),
-                  floatRaw == LOW ? "LOW" : "HIGH");
+                  floatRaw == LOW ? "LOW" : "HIGH", cloudStateText());
+    Serial.printf("INFO heap %u, lowest %u, biggest block %u, uptime %lu min\n", ESP.getFreeHeap(),
+                  ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(), millis() / 60000);
     return;
   }
   else ok = false;
@@ -658,10 +741,10 @@ void handleCommand(String cmd) {
 const char *const COMMAND_WORDS[] = {
   "AUTO_", "MIST_", "REFILL_", "SPRINKLER_", "FAN_", "LIGHT_", "GET_STATUS",
   "SET_RTC=", "SET_HUM_", "SET_CO2_", "SET_SPR_SCHED=", "SET_LGT_SCHED=",
-  "CLEAR_SPR_SCHED", "CLEAR_LGT_SCHED", "INFO",
+  "CLEAR_SPR_SCHED", "CLEAR_LGT_SCHED", "INFO", "WIFI_SCAN", "SET_WIFI=",
 };
 
-void handleLine(String line) {
+void handleLine(String line, Source src) {
   String up = line;
   up.toUpperCase();
   int start = -1;
@@ -673,14 +756,14 @@ void handleLine(String line) {
     if (line.length()) Serial.println("IGNORED: " + line);
     return;
   }
-  handleCommand(line.substring(start));
+  handleCommand(line.substring(start), src);
 }
 
-void readLines(Stream &in, String &buf) {
+void readLines(Stream &in, String &buf, Source src) {
   while (in.available()) {
     int c = in.read();
-    if (c == '\n') { handleLine(buf); buf = ""; }
-    else if (c >= 0x20 && c <= 0x7E && buf.length() < 200) buf += (char)c;
+    if (c == '\n') { handleLine(buf, src); buf = ""; }
+    else if (c >= 0x20 && c <= 0x7E && buf.length() < 320) buf += (char)c;
   }
 }
 
@@ -717,15 +800,36 @@ void setup() {
   loadSettings();
 
   co2Serial.begin(9600, SERIAL_8N1, CO2_RX_PIN, CO2_TX_PIN);
+  hmiSerial.setRxBufferSize(1024);
+  hmiSerial.setTxBufferSize(1024);
   hmiSerial.begin(115200, SERIAL_8N1, HMI_RX_PIN, HMI_TX_PIN);
+
+  publishToCloud();
+  cloudBegin();
 
   Serial.printf("BODY READY mode=%s\n", autoMode ? "AUTO" : "MANUAL");
 }
 
 void loop() {
   static String hmiBuf, usbBuf;
-  readLines(hmiSerial, hmiBuf);
-  readLines(Serial, usbBuf);
+  static bool buffersReserved = false;
+  if (!buffersReserved) {           // full size once, so they never move in the heap
+    hmiBuf.reserve(330);
+    usbBuf.reserve(330);
+    buffersReserved = true;
+  }
+  readLines(hmiSerial, hmiBuf, SRC_HMI);
+  readLines(Serial, usbBuf, SRC_USB);
+  char cloudCmd[64];
+  while (cloudNextCommand(cloudCmd, sizeof(cloudCmd))) {
+    Serial.printf("FROM APP: %s\n", cloudCmd);
+    handleCommand(cloudCmd, SRC_CLOUD);
+  }
+  String scanLine;
+  if (cloudTakeScan(scanLine)) {
+    hmiSerial.println(scanLine);
+    Serial.println(scanLine);
+  }
 
   static unsigned long lastSensor = 0, lastStatus = 0;
   unsigned long now = millis();

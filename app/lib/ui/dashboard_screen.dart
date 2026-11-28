@@ -27,8 +27,12 @@ class DashboardScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(DateFormat('EEE, MMM d').format(s.now),
-                  style: const TextStyle(fontSize: 13, color: AppColors.inkDim, fontWeight: FontWeight.w500)),
+              Flexible(
+                child: Text(DateFormat('EEE, MMM d').format(s.now),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: AppColors.inkDim, fontWeight: FontWeight.w500)),
+              ),
               // The tag sits up here so the bell and status fit beside the title.
               const DemoBadge(),
             ]),
